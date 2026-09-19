@@ -1,4 +1,9 @@
-# Builds the demo and publishes it to GitHub Pages on every push to main.
+# Builds the demo and publishes it to the gh-pages branch.
+#
+# Deliberately does NOT use actions/configure-pages or actions/deploy-pages:
+# both call the Pages API, which fails outright until Pages has been enabled on
+# the repo, and the default workflow token cannot enable it. Pushing a branch
+# only needs `contents: write`, which the token always has.
 name: Deploy demo
 
 on:
@@ -7,39 +12,44 @@ on:
   workflow_dispatch:
 
 permissions:
-  contents: read
-  pages: write
-  id-token: write
+  contents: write
 
 concurrency:
-  group: pages
+  group: deploy-demo
   cancel-in-progress: true
 
 jobs:
-  build:
+  build-and-publish:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
+
       - uses: actions/setup-node@v4
         with:
           node-version: 20
           cache: npm
+
       - run: npm ci
-      - run: npx tsc --noEmit
-      - run: npm run build
+
+      - name: Typecheck
+        run: npx tsc --noEmit
+
+      - name: Build
+        run: npm run build
         env:
           GITHUB_PAGES: 'true'
-      - uses: actions/configure-pages@v5
-      - uses: actions/upload-pages-artifact@v3
-        with:
-          path: dist
 
-  deploy:
-    needs: build
-    runs-on: ubuntu-latest
-    environment:
-      name: github-pages
-      url: ${{ steps.deployment.outputs.page_url }}
-    steps:
-      - id: deployment
-        uses: actions/deploy-pages@v4
+      - name: Publish to gh-pages
+        run: |
+          # .nojekyll stops GitHub running the output through Jekyll, which
+          # would drop any file or directory beginning with an underscore.
+          touch dist/.nojekyll
+          cd dist
+          git init -q
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+          git add -A
+          git commit -q -m "Demo build from ${GITHUB_SHA::7}"
+          git push -f "https://x-access-token:${GITHUB_TOKEN}@github.com/${GITHUB_REPOSITORY}.git" HEAD:gh-pages
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
