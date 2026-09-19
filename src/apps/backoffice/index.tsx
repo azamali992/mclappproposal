@@ -93,8 +93,13 @@ const ALL_ITEMS: Record<NavId, NavItem> = {
   },
 };
 
+/**
+ * What each role opens every day, and nothing else. Admin used to carry all
+ * seven screens; the three operational ones belong to the people who actually
+ * work them, and an admin who needs the dispatch queue can act as the clerk.
+ */
 const NAV_BY_ROLE: Record<Role, NavId[]> = {
-  admin: ['dashboard', 'reconcile', 'oracle', 'clerk', 'sales', 'gate', 'audit'],
+  admin: ['dashboard', 'reconcile', 'oracle', 'audit'],
   cashier: ['reconcile', 'oracle', 'audit'],
   clerk: ['clerk', 'gate', 'audit'],
   sales: ['sales', 'audit'],

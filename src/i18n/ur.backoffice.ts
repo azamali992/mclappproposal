@@ -52,12 +52,7 @@ export const urBackoffice: Dict = {
   'Cylinders out': 'باہر گئے سلنڈر',
   'Cash collected': 'وصول شدہ نقد',
   'Failed posts': 'ناکام پوسٹنگ',
-  // Arrow points leftward: under RTL that is the "forward" direction.
-  'Delivery → posting': 'ڈیلیوری ← پوسٹنگ',
   'Monthly volume — real historical data': 'ماہانہ حجم — اصل تاریخی ڈیٹا',
-  'Payment terms mix': 'ادائیگی کی شرائط کا تناسب',
-  'Drives what the cashier expects to count': 'اسی سے طے ہوتا ہے کہ کیشیئر کتنی نقدی گنے گا',
-  Pipeline: 'مراحل',
 
   // ── Integration console ──────────────────────────────────────────────────
   'Oracle ORDS posting — every attempt, its payload, its response, and its retry. The ECR is the idempotency key, so a document can never be raised twice.':
@@ -94,17 +89,28 @@ export const urBackoffice: Dict = {
   'Releasing…': 'اجرا ہو رہا ہے…',
   'Release hold & post': 'روک ہٹائیں اور پوسٹ کریں',
   'Posting to Oracle': 'اوریکل میں پوسٹ ہو رہا ہے',
+  'Show the detail': 'تفصیل دکھائیں',
   'Confirm a matched cash count': 'برابر نقد گنتی کی تصدیق',
   'Confirm a cash mismatch': 'نقد کے فرق کی تصدیق',
 
   // ── Dispatch queue (clerk) ───────────────────────────────────────────────
-  'Fill, assign, dispatch — the ECR is issued at the last step, never before.':
-    'بھرائی، تفویض، روانگی — ای سی آر آخری مرحلے پر جاری ہوتا ہے، اس سے پہلے کبھی نہیں۔',
-  // Lane hints (lane titles themselves are order statuses — see ur.common.ts)
-  'Awaiting warehouse review': 'گودام کے جائزے کا منتظر',
-  'Staged — needs a vehicle': 'تیار — گاڑی درکار',
-  'Loaded — no ECR yet': 'لوڈ شدہ — ابھی ای سی آر نہیں',
-  'ECR allocated · on the road': 'ای سی آر جاری · راستے میں',
+  // One list, one button a row. The sentence under the title carries the only
+  // number that mattered out of the five tiles that used to sit here.
+  '{n} orders waiting': '{n} آرڈرز منتظر ہیں',
+  'Nothing in the queue.': 'قطار میں کچھ نہیں۔',
+  // The one next step a row ever offers.
+  Fill: 'بھریں',
+  Assign: 'تفویض کریں',
+  Dispatch: 'روانہ کریں',
+  Release: 'جاری کریں',
+
+  // ── Shared order list — column headings ──────────────────────────────────
+  'What was ordered': 'کیا آرڈر ہوا',
+  'Requested for': 'مطلوبہ تاریخ',
+  Waiting: 'انتظار',
+  'Taken from': 'کہاں سے لیا گیا',
+  'Oracle document': 'اوریکل دستاویز',
+  Created: 'بنایا گیا',
 
   // ── Tab desk (gate) ──────────────────────────────────────────────────────
   'Out with drivers': 'ڈرائیوروں کے پاس',
@@ -117,15 +123,9 @@ export const urBackoffice: Dict = {
   // ── Sales desk ───────────────────────────────────────────────────────────
   'Orders taken by phone on a client’s behalf — same route into the warehouse as the client app.':
     'گاہک کی طرف سے فون پر لیے گئے آرڈرز — گودام تک وہی راستہ جو گاہک ایپ کا ہے۔',
-  'My orders': 'میرے آرڈرز',
-  'All sales orders': 'تمام سیلز آرڈرز',
   'Hide form': 'فارم چھپائیں',
   'New order': 'نیا آرڈر',
-  'Orders taken': 'لیے گئے آرڈرز',
-  'Cylinders sold': 'فروخت شدہ سلنڈر',
   'Order value': 'آرڈر کی مالیت',
-  'Waiting on the warehouse': 'گودام کے منتظر',
-  'Dispatch queue depth': 'روانگی قطار کی لمبائی',
 
   // ── Audit trail ──────────────────────────────────────────────────────────
   'Append-only. Every state change carries the actor, their role and the exact transition — no row is ever edited or deleted.':
@@ -136,40 +136,19 @@ export const urBackoffice: Dict = {
   // never a cash collection — hence خود اٹھانا rather than وصولی.
   'How does the client get the cylinders?': 'گاہک سلنڈر کیسے حاصل کرے گا؟',
   'Deliver to client': 'گاہک تک پہنچائیں',
-  'MCL loads a vehicle and runs it out on a route. Delivered rate — transport included.':
-    'ایم سی ایل گاڑی لوڈ کر کے روٹ پر بھیجتی ہے۔ ڈیلیوری ریٹ — ٹرانسپورٹ شامل ہے۔',
   'Client collects from plant': 'گاہک پلانٹ سے خود لے جائے گا',
-  'The client sends their own van. No vehicle, no route, no driver — and the ex-delivery rate applies.':
-    'گاہک اپنی گاڑی بھیجتا ہے۔ نہ گاڑی، نہ روٹ، نہ ڈرائیور — اور ٹرانسپورٹ کے بغیر والا ریٹ لاگو ہوتا ہے۔',
   'Client collects': 'گاہک خود لے جائے گا',
   'Collection rate': 'خود اٹھانے کا ریٹ',
   'Collection rate — transport not included': 'خود اٹھانے کا ریٹ — ٹرانسپورٹ شامل نہیں',
-  'Delivered rate — transport included': 'ڈیلیوری ریٹ — ٹرانسپورٹ شامل ہے',
-  'Saving on this line': 'اس سطر پر بچت',
-  'Saving — transport not charged': 'بچت — ٹرانسپورٹ کا خرچ نہیں لیا گیا',
   'Order value at the collection rate': 'خود اٹھانے کے ریٹ پر آرڈر کی مالیت',
-  'Every line below is priced off the separate ex-delivery rate card, and the prices are copied onto the order when it is placed. No vehicle, route or driver is assigned; the clerk releases the cylinders at the counter.':
-    'نیچے ہر سطر کی قیمت الگ ایکس ڈیلیوری ریٹ لسٹ سے لی گئی ہے، اور آرڈر درج ہوتے ہی یہ قیمتیں آرڈر پر محفوظ ہو جاتی ہیں۔ کوئی گاڑی، روٹ یا ڈرائیور مقرر نہیں ہوتا؛ کلرک کاؤنٹر پر سلنڈر جاری کرتا ہے۔',
-  'Placing creates the order at Placed and drops it into the warehouse queue as a collection. No vehicle is assigned and no ECR is issued until the clerk releases it at the counter.':
-    'آرڈر درج شدہ حالت میں بنتا ہے اور خود اٹھانے والے کام کے طور پر گودام کی قطار میں چلا جاتا ہے۔ کوئی گاڑی مقرر نہیں ہوتی اور ای سی آر اس وقت تک جاری نہیں ہوتا جب تک کلرک کاؤنٹر پر اسے جاری نہ کرے۔',
-  'Placing creates the order at Placed and drops it straight into the warehouse queue. No ECR is issued until the clerk confirms dispatch.':
-    'آرڈر درج شدہ حالت میں بنتا ہے اور سیدھا گودام کی قطار میں چلا جاتا ہے۔ ای سی آر اس وقت تک جاری نہیں ہوتا جب تک کلرک روانگی کی تصدیق نہ کرے۔',
   'Order #{id} placed for {client} — {n} cylinders to collect from the plant, priced off the ex-delivery card ({saving} less than delivered).':
     'آرڈر #{id} برائے {client} درج ہو گیا — {n} سلنڈر پلانٹ سے خود اٹھائے جائیں گے، ایکس ڈیلیوری ریٹ پر (ڈیلیوری کے مقابلے میں {saving} کم)۔',
   'Order #{id} placed for {client} — {n} cylinders. It is now at the top of the warehouse queue.':
     'آرڈر #{id} برائے {client} درج ہو گیا — {n} سلنڈر۔ یہ اب گودام کی قطار میں سب سے اوپر ہے۔',
 
-  // ── Clerk queue — the collection lane ────────────────────────────────────
-  'All work': 'تمام کام',
-  Deliveries: 'ڈیلیوریاں',
-  Collections: 'خود اٹھانے والے',
-  'Self-collection counter': 'خود اٹھانے کا کاؤنٹر',
-  'The client’s own van comes for these — no vehicle, no route, no driver, and the ex-delivery rate.':
-    'ان کے لیے گاہک کی اپنی گاڑی آتی ہے — نہ گاڑی، نہ روٹ، نہ ڈرائیور، اور ایکس ڈیلیوری ریٹ۔',
-  '{n} released and waiting for someone to turn up': '{n} جاری شدہ — کسی کے آنے کے منتظر',
-  'No self-collections at this location today.': 'آج اس مقام پر خود اٹھانے والا کوئی آرڈر نہیں۔',
-  'No self-collections match the search.': 'تلاش کے مطابق خود اٹھانے والا کوئی آرڈر نہیں۔',
-  'Waiting for the client’s van': 'گاہک کی گاڑی کے منتظر',
+  // ── Self-collections in the shared list ──────────────────────────────────
+  // They no longer get a lane of their own; this tag is the whole marking.
+  Collection: 'خود اٹھانا',
   'How it goes out': 'کیسے باہر جائے گا',
 
   // ── Release for collection (the ECR moment, shared with dispatch) ────────
@@ -244,31 +223,13 @@ export const urBackoffice: Dict = {
 
   // ── Cylinder management charges ─────────────────────────────────────────
   'Cylinder management charges': 'سلنڈر مینجمنٹ چارجز',
-  'Fixed prices from Oracle — pick the work, it goes on the bill':
-    'اوریکل کی مقررہ قیمتیں — کام منتخب کریں، وہ بل پر آ جائے گا',
   'No cylinder management work on this order yet.': 'اس آرڈر پر ابھی کوئی سلنڈر مینجمنٹ کام نہیں۔',
   'Add cylinder management work': 'سلنڈر مینجمنٹ کا کام شامل کریں',
-  'Choose the work': 'کام منتخب کریں',
-  '{n} fixed-price items in Oracle': 'اوریکل میں {n} مقررہ قیمت والے آئٹم',
-  'Work done': 'کیا گیا کام',
-  'Fixed price': 'مقررہ قیمت',
-  'On the bill': 'بل پر',
-  'Goes on the bill': 'بل پر آئے گا',
   'Add to the bill': 'بل میں شامل کریں',
-  'Service work on this order': 'اس آرڈر پر سروس کا کام',
   'Service work': 'سروس کا کام',
   Goods: 'مال',
   'Client’s bill': 'گاہک کا بل',
-  'Per cylinder': 'فی سلنڈر',
-  'Per job': 'فی کام',
   'per cylinder': 'فی سلنڈر',
-  'How many cylinders': 'کتنے سلنڈر',
-  'How many jobs': 'کتنے کام',
-  'Why the work was needed (optional)': 'یہ کام کیوں ضروری تھا (اختیاری)',
-  'e.g. both valves leaking on return': 'مثلاً واپسی پر دونوں والو لیک کر رہے تھے',
-  'Oracle item': 'اوریکل آئٹم',
-  'the price is copied onto the order now, so a later rate change cannot restate this bill.':
-    'قیمت ابھی آرڈر پر محفوظ ہو جاتی ہے، اس لیے بعد میں ریٹ بدلنے سے یہ بل تبدیل نہیں ہو سکتا۔',
   'Take this charge off the bill': 'یہ چارج بل سے ہٹا دیں',
   'Charge added to the bill': 'چارج بل میں شامل ہو گیا',
   '{name} ×{qty} added — the client’s bill is now {total}.':
@@ -286,14 +247,12 @@ export const urBackoffice: Dict = {
   'What they are ordering': 'وہ کیا آرڈر کر رہے ہیں',
   'Unit price': 'فی یونٹ قیمت',
   'How many': 'کتنے',
-  'Line total': 'سطر کا کل',
-  'Notes for the warehouse': 'گودام کے لیے نوٹس',
   'Add another product': 'ایک اور پروڈکٹ شامل کریں',
   'Place order': 'آرڈر درج کریں',
   'Order placed': 'آرڈر درج ہو گیا',
-  'Deposit held on cylinders': 'سلنڈروں پر رکھی گئی ضمانت',
   Totals: 'کل میزان',
   Value: 'مالیت',
+  cylinders: 'سلنڈر',
   each: 'فی عدد',
   includes: 'اس میں شامل',
   'service work': 'سروس کا کام',

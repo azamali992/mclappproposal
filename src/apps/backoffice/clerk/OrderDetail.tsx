@@ -1,14 +1,19 @@
-// ─── OrderDetail — one order, everything about it ────────────────────────────
+// ─── OrderDetail — one order, opened short ───────────────────────────────────
 // Shared by the clerk queue (as a right-hand drawer) and the sales desk (as an
 // inline panel). It renders state and hosts an `actions` slot; the caller owns
 // the verbs that move the order along the pipeline.
+//
+// It opens on the essentials only: who it is for, what they want, where it has
+// got to, the ECR, and the money. Everything else — fulfilment paperwork, the
+// service charges, the delivery evidence, the full audit trail — sits behind
+// two collapsed toggles, because none of it is why the screen was opened.
 //
 // One exception, deliberate: the cylinder management charges are edited here,
 // because the bill is the only place they make sense. That editing lives in
 // ServiceChargePanel and goes through api.addServiceCharge /
 // api.removeServiceCharge like everything else — no rule is applied locally.
 
-import { useEffect, useMemo } from 'react';
+import { useEffect, useMemo, useState } from 'react';
 import type { ReactNode } from 'react';
 import type { Order } from '../../../core/types';
 import {
@@ -19,15 +24,15 @@ import {
   expectedCash,
   serviceChargeTotal,
 } from '../../../core/store';
-import { Money, PipelineTracker } from '../../../ui/primitives';
-import { X, Box } from '../../../ui/icons';
+import { Money } from '../../../ui/primitives';
+import { X, Box, ChevronDown } from '../../../ui/icons';
+import { useT } from '../../../i18n';
 import OrderTimeline from '../shared/OrderTimeline';
 import ServiceChargePanel from './ServiceChargePanel';
 import {
+  CollectionTag,
   EcrText,
-  FulfilmentTag,
   OrderStatusPill,
-  OriginTag,
   TONE_CLASS,
   fmtDate,
   fmtDateTime,
@@ -35,18 +40,6 @@ import {
 } from '../shared/OrderTable';
 
 // ─── Small layout atoms ──────────────────────────────────────────────────────
-
-function Section({ title, children, right }: { title: string; children: ReactNode; right?: ReactNode }) {
-  return (
-    <section className="border-t border-line px-5 py-5">
-      <div className="mb-3 flex flex-wrap items-baseline justify-between gap-2">
-        <h3 className="text-lg font-semibold text-fg">{title}</h3>
-        {right}
-      </div>
-      {children}
-    </section>
-  );
-}
 
 function KV({ label, children, tone }: { label: string; children: ReactNode; tone?: 'warn' | 'success' }) {
   return (
@@ -63,6 +56,28 @@ function KV({ label, children, tone }: { label: string; children: ReactNode; ton
   );
 }
 
+/**
+ * A closed drawer inside the drawer. Nothing in here is why anyone opened the
+ * order, so nothing in here is on screen until it is asked for.
+ */
+function Disclosure({ label, children }: { label: string; children: ReactNode }) {
+  const [open, setOpen] = useState(false);
+  return (
+    <section className="border-t border-line">
+      <button
+        type="button"
+        onClick={() => setOpen((v) => !v)}
+        aria-expanded={open}
+        className="flex w-full items-center gap-2 px-5 py-4 text-start text-lg font-semibold text-fg hover:bg-surface-high focus:outline-none focus-visible:ring-1 focus-visible:ring-accent"
+      >
+        <ChevronDown className={`h-4 w-4 text-fg-muted ${open ? 'rotate-180' : ''}`} />
+        {label}
+      </button>
+      {open && <div className="px-5 pb-5">{children}</div>}
+    </section>
+  );
+}
+
 // ─── Component ───────────────────────────────────────────────────────────────
 
 export interface OrderDetailProps {
@@ -71,7 +86,7 @@ export interface OrderDetailProps {
   onClose?: () => void;
   /** 'drawer' overlays from the right and traps Escape; 'panel' renders inline. */
   variant?: 'drawer' | 'panel';
-  /** Footer verb bar. The clerk passes Fill / Assign / Dispatch / Cancel here. */
+  /** Footer verb bar. The clerk passes the single next step here. */
   actions?: ReactNode;
   className?: string;
 }
@@ -83,6 +98,7 @@ export function OrderDetail({
   actions,
   className = '',
 }: OrderDetailProps) {
+  const t = useT();
   const s = useStore((st) => st);
   const order: Order | undefined = orderId == null ? undefined : select.order(s, orderId);
 
@@ -116,9 +132,6 @@ export function OrderDetail({
         className={`flex h-full flex-col items-center justify-center border border-line bg-surface p-8 text-center ${className}`}
       >
         <div className="text-lg font-medium text-fg">Select an order</div>
-        <p className="mt-1 max-w-xs text-base text-fg-muted">
-          Its client, lines, capacity and full audit trail appear here.
-        </p>
       </div>
     );
   }
@@ -137,29 +150,23 @@ export function OrderDetail({
 
   const body = (
     <div className="flex h-full min-h-0 flex-col bg-surface">
-      {/* ── Header ───────────────────────────────────────────────────────── */}
+      {/* ── Header: what it is, where it has got to, its number ──────────── */}
       <header className="flex-none border-b border-line bg-surface px-5 py-4">
         <div className="flex items-start gap-3">
           <div className="min-w-0 flex-1">
             <div className="flex flex-wrap items-center gap-3">
-              <span className="text-base text-fg-muted">Order</span>
-              <span className="font-mono text-base tabular-nums text-fg">#{order.id}</span>
-              <OriginTag origin={order.origin} />
-              <FulfilmentTag fulfilment={order.fulfilment} />
+              <span className="font-mono text-base tabular-nums text-fg-muted">#{order.id}</span>
               <OrderStatusPill status={order.status} />
+              {collecting && <CollectionTag />}
             </div>
-            <div className="mt-2 flex items-baseline gap-2">
+            <div className="mt-2 truncate text-xl font-semibold text-fg">{client?.name}</div>
+            <div className="mt-1">
               {order.ecr ? (
                 <EcrText ecr={order.ecr} size="lg" />
               ) : (
-                <span className="text-lg font-medium text-fg-muted">No ECR number yet</span>
+                <span className="text-base text-fg-muted">No ECR number yet</span>
               )}
             </div>
-            <p className="mt-1 text-base text-fg-muted">
-              {order.ecr
-                ? `Allocated at dispatch by ${select.user(s, order.dispatchedBy)?.name ?? 'the warehouse'} · ${fmtDateTime(order.dispatchedAt)}`
-                : 'An ECR is issued only when dispatch is confirmed, so an abandoned order never burns a number.'}
-            </p>
           </div>
           {onClose && (
             <button
@@ -172,16 +179,14 @@ export function OrderDetail({
             </button>
           )}
         </div>
-        <div className="mt-3">
-          <PipelineTracker current={order.status} />
-        </div>
       </header>
 
       {/* ── Scrolling body ───────────────────────────────────────────────── */}
       <div className="min-h-0 flex-1 overflow-y-auto">
-        <Section
-          title="Client"
-          right={
+        {/* ── What they are getting, and what it costs ──────────────────── */}
+        <section className="px-5 py-5">
+          <div className="mb-3 flex flex-wrap items-baseline justify-between gap-2">
+            <h3 className="text-lg font-semibold text-fg">{t('What was ordered')}</h3>
             <span
               className={`border px-2 py-0.5 text-base font-semibold ${
                 client?.paymentTerms === 'credit' ? TONE_CLASS.warn : TONE_CLASS.success
@@ -189,15 +194,153 @@ export function OrderDetail({
             >
               {client?.paymentTerms === 'credit' ? 'Credit terms' : 'Cash on delivery'}
             </span>
-          }
-        >
-          <div className="text-lg font-medium text-fg">{client?.name}</div>
-          <div className="text-base text-fg-muted">{client?.address}</div>
-          <dl className="mt-4 grid grid-cols-2 gap-x-6 gap-y-4 sm:grid-cols-3">
+          </div>
+
+          <div className="border border-line">
+            <table className="w-full border-collapse text-base">
+              <thead>
+                <tr className="border-b border-line bg-surface text-base text-fg">
+                  <th className="px-3 py-3 text-left font-semibold">{t('Product')}</th>
+                  <th className="px-3 py-3 text-right font-semibold">{t('Unit price')}</th>
+                  <th className="px-3 py-3 text-right font-semibold">{t('Quantity')}</th>
+                  <th className="px-3 py-3 text-right font-semibold">{t('Value')}</th>
+                </tr>
+              </thead>
+              <tbody>
+                {order.lines.map((l) => {
+                  const p = select.product(s, l.productId);
+                  const qty = l.qtyLoaded ?? l.qtyOrdered;
+                  const short = qty < l.qtyOrdered;
+                  return (
+                    <tr key={l.id} className="border-t border-line">
+                      <td className="px-3 py-3">
+                        <div className="font-medium text-fg">{p?.name}</div>
+                        <div className="text-base text-fg-muted">{p?.size}</div>
+                      </td>
+                      <td className="px-3 py-3 text-right font-mono tabular-nums text-fg-muted">
+                        <Money value={l.unitPrice} />
+                      </td>
+                      <td
+                        className={`px-3 py-3 text-right font-mono tabular-nums ${
+                          short ? 'font-semibold text-warn-fg' : 'text-fg'
+                        }`}
+                      >
+                        {qty}
+                        {short && <span className="text-fg-muted">/{l.qtyOrdered}</span>}
+                      </td>
+                      <td className="px-3 py-3 text-right font-mono tabular-nums text-fg">
+                        <Money value={qty * l.unitPrice} />
+                      </td>
+                    </tr>
+                  );
+                })}
+              </tbody>
+              <tfoot>
+                <tr className="border-t border-line bg-surface font-medium">
+                  <td className="px-3 py-3 text-base font-semibold text-fg">{t('Totals')}</td>
+                  <td />
+                  <td className="px-3 py-3 text-right font-mono tabular-nums text-fg">
+                    {totals.loaded || totals.ordered}
+                  </td>
+                  <td className="px-3 py-3 text-right font-mono tabular-nums text-fg">
+                    <Money value={totals.goods} />
+                  </td>
+                </tr>
+              </tfoot>
+            </table>
+          </div>
+
+          {/* ── The bill: goods + service work = total ────────────────── */}
+          <div className="mt-3 border border-line">
+            <dl className="divide-y divide-line">
+              <div className="flex items-baseline justify-between gap-3 px-3 py-2.5">
+                <dt className="text-base text-fg-muted">{t('Goods')}</dt>
+                <dd className="font-mono text-base tabular-nums text-fg">
+                  <Money value={totals.goods} />
+                </dd>
+              </div>
+              <div className="flex items-baseline justify-between gap-3 px-3 py-2.5">
+                <dt className="flex items-center gap-2 text-base text-fg-muted">
+                  <Box className="h-4 w-4" /> {t('Service work')}
+                  {order.serviceCharges.length > 0 && (
+                    <span className="font-mono tabular-nums">({order.serviceCharges.length})</span>
+                  )}
+                </dt>
+                <dd className="font-mono text-base tabular-nums text-fg">
+                  <Money value={totals.service} />
+                </dd>
+              </div>
+              <div className="flex items-baseline justify-between gap-3 bg-surface px-3 py-3">
+                <dt className="text-base font-semibold text-fg">{t('Client’s bill')}</dt>
+                <dd className="font-mono text-xl font-semibold tabular-nums text-fg">
+                  <Money value={totals.value} />
+                </dd>
+              </div>
+            </dl>
+          </div>
+
+          <p className="mt-3 text-base text-fg-muted">
+            {client?.paymentTerms === 'credit' ? (
+              <>Credit client — the value posts against their account, no cash changes hands.</>
+            ) : (
+              <>
+                {collecting ? 'Cash on collection — the counter takes ' : 'Cash on delivery — the driver returns '}
+                <span className="font-mono tabular-nums text-fg">
+                  <Money value={totals.cash || totals.value} />
+                </span>{' '}
+                to the gate cashier.
+              </>
+            )}
+          </p>
+        </section>
+
+        {/* ── Everything that is not why this was opened ────────────────── */}
+        <Disclosure label={t('Details')}>
+          <dl className="grid grid-cols-2 gap-x-6 gap-y-4 sm:grid-cols-3">
+            <KV label={t('Location')}>
+              {location?.name} <span className="font-mono text-base text-fg-muted">{location?.code}</span>
+            </KV>
+            <KV label={t('Book type')}>
+              {book?.name} <span className="font-mono text-base text-fg-muted">{book?.code}</span>
+            </KV>
+            <KV label={t('Requested for')}>{fmtDate(order.requestedDate)}</KV>
+            {collecting ? (
+              <>
+                <KV label={t('Vehicle, route and driver')}>{t('None — the client’s own van')}</KV>
+                <KV label="Collected by" tone={order.collectedBy ? undefined : 'warn'}>
+                  {order.collectedBy ?? 'Not collected yet'}
+                </KV>
+                <KV label="Collected at">
+                  {order.collectedAt ? fmtDateTime(order.collectedAt) : '—'}
+                </KV>
+              </>
+            ) : (
+              <>
+                <KV label={t('Route')}>{route ? `${route.code} — ${route.name}` : 'Not assigned'}</KV>
+                <KV label={t('Vehicle')}>
+                  {vehicle ? (
+                    <span className="font-mono">
+                      {vehicle.registration}
+                      <span className="ms-2 font-sans text-base text-fg-muted">
+                        {vclass?.name}, holds {vclass?.maxCylinders}
+                      </span>
+                    </span>
+                  ) : (
+                    'Not assigned'
+                  )}
+                </KV>
+                <KV label={t('Driver')}>{driver?.name ?? 'Not assigned'}</KV>
+              </>
+            )}
+            <KV label="Taken by">
+              {creator?.name} <span className="text-base text-fg-muted">({roleLabel(creator?.role)})</span>
+            </KV>
+            <KV label="Placed">{fmtDateTime(order.createdAt)}</KV>
+            <KV label="Filled">{order.filledAt ? fmtDateTime(order.filledAt) : '—'}</KV>
             <KV label="Oracle customer">
               <span className="font-mono text-base">{client?.oracleCustomerCode}</span>
             </KV>
-            <KV label="Phone number">
+            <KV label={t('Phone')}>
               <span className="font-mono text-base">{client?.contactNumber}</span>
             </KV>
             <KV label="Confirms by">{client?.confirmMethod === 'otp' ? 'OTP to client' : 'Signature'}</KV>
@@ -215,202 +358,18 @@ export function OrderDetail({
               </>
             )}
           </dl>
-        </Section>
 
-        <Section title="Fulfilment">
-          <dl className="grid grid-cols-2 gap-x-6 gap-y-4 sm:grid-cols-3">
-            <KV label="Location">
-              {location?.name} <span className="font-mono text-base text-fg-muted">{location?.code}</span>
-            </KV>
-            <KV label="Book type">
-              {book?.name} <span className="font-mono text-base text-fg-muted">{book?.code}</span>
-            </KV>
-            <KV label="Requested">{fmtDate(order.requestedDate)}</KV>
-            <KV label="How it goes out">
-              {collecting ? 'Client collects from the plant' : 'Delivered on an MCL vehicle'}
-            </KV>
-            {collecting ? (
-              <>
-                <KV label="Vehicle, route and driver">None — the client’s own van</KV>
-                <KV label="Collected by" tone={order.collectedBy ? undefined : 'warn'}>
-                  {order.collectedBy ?? 'Not collected yet'}
-                </KV>
-                <KV label="Collected at">
-                  {order.collectedAt ? fmtDateTime(order.collectedAt) : '—'}
-                </KV>
-              </>
-            ) : (
-              <>
-                <KV label="Route">{route ? `${route.code} — ${route.name}` : 'Not assigned'}</KV>
-                <KV label="Vehicle">
-                  {vehicle ? (
-                    <span className="font-mono">
-                      {vehicle.registration}
-                      <span className="ms-2 font-sans text-base text-fg-muted">
-                        {vclass?.name}, holds {vclass?.maxCylinders} cylinders
-                      </span>
-                    </span>
-                  ) : (
-                    'Not assigned'
-                  )}
-                </KV>
-                <KV label="Driver">{driver?.name ?? 'Not assigned'}</KV>
-              </>
-            )}
-            <KV label="Taken by">
-              {creator?.name} <span className="text-base text-fg-muted">({roleLabel(creator?.role)})</span>
-            </KV>
-            <KV label="Placed">{fmtDateTime(order.createdAt)}</KV>
-            <KV label="Filled">{order.filledAt ? fmtDateTime(order.filledAt) : '—'}</KV>
-          </dl>
           {order.notes && (
             <p className="mt-4 border border-line px-3 py-2 text-base text-fg">
-              <span className="font-semibold">Note:</span> {order.notes}
+              <span className="font-semibold">{t('Notes')}:</span> {order.notes}
             </p>
           )}
-        </Section>
 
-        <Section
-          title="What was ordered"
-          right={
-            <span className="text-base text-fg-muted">
-              {collecting
-                ? 'Collection rate — transport not included'
-                : 'Delivered rate — transport included'}
-            </span>
-          }
-        >
-          <div className="border border-line">
-            <table className="w-full border-collapse text-base">
-              <thead>
-                <tr className="border-b border-line bg-surface text-base text-fg">
-                  <th className="px-3 py-3 text-left font-semibold">Product</th>
-                  <th className="px-3 py-3 text-right font-semibold">Unit price</th>
-                  <th className="px-3 py-3 text-right font-semibold">Ordered</th>
-                  <th className="px-3 py-3 text-right font-semibold">Loaded</th>
-                  <th className="px-3 py-3 text-right font-semibold">Delivered</th>
-                  <th className="px-3 py-3 text-right font-semibold">Empties back</th>
-                  <th className="px-3 py-3 text-right font-semibold">Value</th>
-                </tr>
-              </thead>
-              <tbody>
-                {order.lines.map((l) => {
-                  const p = select.product(s, l.productId);
-                  const qty = l.qtyLoaded ?? l.qtyOrdered;
-                  const short = (l.qtyLoaded ?? l.qtyOrdered) < l.qtyOrdered;
-                  return (
-                    <tr key={l.id} className="border-t border-line">
-                      <td className="px-3 py-3">
-                        <div className="font-medium text-fg">{p?.name}</div>
-                        <div className="text-base text-fg-muted">
-                          <span className="font-mono">{p?.sku}</span> · {p?.size}
-                        </div>
-                      </td>
-                      <td className="px-3 py-3 text-right font-mono tabular-nums text-fg-muted">
-                        <Money value={l.unitPrice} />
-                      </td>
-                      <td className="px-3 py-3 text-right font-mono tabular-nums text-fg-muted">
-                        {l.qtyOrdered}
-                      </td>
-                      <td
-                        className={`px-3 py-3 text-right font-mono tabular-nums ${
-                          short ? 'font-semibold text-warn-fg' : 'text-fg'
-                        }`}
-                      >
-                        {l.qtyLoaded ?? '—'}
-                      </td>
-                      <td className="px-3 py-3 text-right font-mono tabular-nums text-fg">
-                        {l.qtyDelivered ?? '—'}
-                      </td>
-                      <td className="px-3 py-3 text-right font-mono tabular-nums text-fg-muted">
-                        {l.qtyReturned ?? '—'}
-                      </td>
-                      <td className="px-3 py-3 text-right font-mono tabular-nums text-fg">
-                        <Money value={qty * l.unitPrice} />
-                      </td>
-                    </tr>
-                  );
-                })}
-              </tbody>
-              <tfoot>
-                <tr className="border-t border-line bg-surface font-medium">
-                  <td className="px-3 py-3 text-base font-semibold text-fg">Totals</td>
-                  <td />
-                  <td className="px-3 py-3 text-right font-mono tabular-nums text-fg-muted">
-                    {totals.ordered}
-                  </td>
-                  <td className="px-3 py-3 text-right font-mono tabular-nums text-fg">
-                    {totals.loaded || '—'}
-                  </td>
-                  <td className="px-3 py-3 text-right font-mono tabular-nums text-fg">
-                    {totals.delivered || '—'}
-                  </td>
-                  <td className="px-3 py-3 text-right font-mono tabular-nums text-fg-muted">
-                    {totals.returned || '—'}
-                  </td>
-                  <td className="px-3 py-3 text-right font-mono tabular-nums text-fg">
-                    <Money value={totals.goods} />
-                  </td>
-                </tr>
-              </tfoot>
-            </table>
-          </div>
-
-          {/* ── The bill: goods + service work = total ────────────────── */}
-          <div className="mt-3 border border-line">
-            <dl className="divide-y divide-line">
-              <div className="flex items-baseline justify-between gap-3 px-3 py-2.5">
-                <dt className="text-base text-fg-muted">Goods</dt>
-                <dd className="font-mono text-base tabular-nums text-fg">
-                  <Money value={totals.goods} />
-                </dd>
-              </div>
-              <div className="flex items-baseline justify-between gap-3 px-3 py-2.5">
-                <dt className="flex items-center gap-2 text-base text-fg-muted">
-                  <Box className="h-4 w-4" /> Cylinder management work
-                  {order.serviceCharges.length > 0 && (
-                    <span className="font-mono tabular-nums">({order.serviceCharges.length})</span>
-                  )}
-                </dt>
-                <dd className="font-mono text-base tabular-nums text-fg">
-                  <Money value={totals.service} />
-                </dd>
-              </div>
-              <div className="flex items-baseline justify-between gap-3 bg-surface px-3 py-3">
-                <dt className="text-base font-semibold text-fg">The client’s bill</dt>
-                <dd className="font-mono text-xl font-semibold tabular-nums text-fg">
-                  <Money value={totals.value} />
-                </dd>
-              </div>
-            </dl>
-          </div>
-          <p className="mt-3 text-base text-fg-muted">
-            {client?.paymentTerms === 'credit' ? (
-              <>Credit client — no cash is expected at the door; the value posts against their account.</>
-            ) : (
-              <>
-                {collecting ? 'Cash on collection — the counter takes ' : 'Cash on delivery — the driver must return '}
-                <span className="font-mono tabular-nums text-fg-muted">
-                  <Money value={totals.cash || totals.value} />
-                </span>{' '}
-                {collecting
-                  ? 'when the client’s van arrives, and it goes to the gate cashier with the rest of the day’s cash.'
-                  : 'to the gate cashier.'}
-              </>
-            )}
-          </p>
-        </Section>
-
-        <section className="border-t border-line px-5 py-5">
-          <ServiceChargePanel orderId={order.id} />
-        </section>
-
-        {(delivery || confirmation) && (
-          <Section title="Delivery and confirmation">
-            <div className="grid gap-4 sm:grid-cols-2">
+          {(delivery || confirmation) && (
+            <div className="mt-5 grid gap-4 sm:grid-cols-2">
               {delivery && (
                 <div className="border border-line bg-surface p-4">
-                  <div className="text-lg font-semibold text-fg">What the driver recorded</div>
+                  <div className="text-base font-semibold text-fg">What the driver recorded</div>
                   <dl className="mt-2 space-y-2 text-base">
                     <div className="flex justify-between gap-2">
                       <dt className="text-fg-muted">Cylinders delivered</dt>
@@ -427,12 +386,6 @@ export function OrderDetail({
                       </dd>
                     </div>
                     <div className="flex justify-between gap-2">
-                      <dt className="text-fg-muted">Where it was captured</dt>
-                      <dd className="font-mono tabular-nums text-fg-muted">
-                        {delivery.gpsLat?.toFixed(4)}, {delivery.gpsLng?.toFixed(4)}
-                      </dd>
-                    </div>
-                    <div className="flex justify-between gap-2">
                       <dt className="text-fg-muted">client_ref</dt>
                       <dd className="font-mono text-fg-muted">{delivery.clientRef.slice(0, 13)}…</dd>
                     </div>
@@ -441,21 +394,19 @@ export function OrderDetail({
               )}
               {confirmation && (
                 <div className="border border-line bg-surface p-4">
-                  <div className="text-lg font-semibold text-fg">How the customer confirmed</div>
+                  <div className="text-base font-semibold text-fg">How the customer confirmed</div>
                   <dl className="mt-2 space-y-2 text-base">
                     <div className="flex justify-between gap-2">
                       <dt className="text-fg-muted">Method</dt>
                       <dd className="text-fg">{confirmation.method === 'otp' ? 'OTP' : 'Signature'}</dd>
                     </div>
                     <div className="flex justify-between gap-2">
-                      <dt className="text-fg-muted">Receipt</dt>
+                      <dt className="text-fg-muted">{t('Receipt')}</dt>
                       <dd className="font-mono text-fg">{confirmation.receiptRef}</dd>
                     </div>
                     <div className="flex justify-between gap-2">
-                      <dt className="text-fg-muted">Status</dt>
-                      <dd
-                        className={confirmation.status === 'disputed' ? 'text-danger-fg' : 'text-success-fg'}
-                      >
+                      <dt className="text-fg-muted">{t('Status')}</dt>
+                      <dd className={confirmation.status === 'disputed' ? 'text-danger-fg' : 'text-success-fg'}>
                         {confirmation.status}
                       </dd>
                     </div>
@@ -464,12 +415,16 @@ export function OrderDetail({
                 </div>
               )}
             </div>
-          </Section>
-        )}
+          )}
 
-        <Section title="Everything that happened to this order">
-          <OrderTimeline orderId={order.id} dense title="Audit & event trail" />
-        </Section>
+          <div className="mt-5 border-t border-line pt-5">
+            <ServiceChargePanel orderId={order.id} />
+          </div>
+        </Disclosure>
+
+        <Disclosure label={t('History')}>
+          <OrderTimeline orderId={order.id} dense title={t('History')} />
+        </Disclosure>
       </div>
 
       {/* ── Action bar ───────────────────────────────────────────────────── */}
@@ -480,18 +435,12 @@ export function OrderDetail({
   );
 
   if (variant === 'panel') {
-    return (
-      <div className={`overflow-hidden border border-line ${className}`}>{body}</div>
-    );
+    return <div className={`overflow-hidden border border-line ${className}`}>{body}</div>;
   }
 
   return (
     <div className="fixed inset-0 z-drawer flex justify-end" role="dialog" aria-modal="true" aria-label={`Order ${order.id}`}>
-      <div
-        className="absolute inset-0 bg-scrim"
-        onClick={onClose}
-        aria-hidden="true"
-      />
+      <div className="absolute inset-0 bg-scrim" onClick={onClose} aria-hidden="true" />
       <aside
         className={`relative flex h-full w-[46rem] max-w-full flex-col border-s border-line ${className}`}
       >

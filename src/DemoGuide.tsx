@@ -31,7 +31,7 @@ const BEATS: Beat[] = [
     userId: 3,
     title: 'The order appears in the warehouse queue',
     clicks: [
-      'The new order is already in the Placed lane — nobody re-keyed it',
+      'The new order is already at the top of the dispatch queue — nobody re-keyed it',
       'Mark filled → Assign vehicle + route + driver',
       'Try assigning more than the vehicle holds — the system refuses',
     ],

@@ -79,6 +79,7 @@ function Body({ target, onClose }: { target: ReconcileTarget; onClose: () => voi
   const [resolveNotes, setResolveNotes] = useState('');
   const [busy, setBusy] = useState(false);
   const [confirmOpen, setConfirmOpen] = useState(false);
+  const [detailOpen, setDetailOpen] = useState(false);
   const [ruleError, setRuleError] = useState<{ rule: string; message: string } | null>(null);
 
   const orders = useMemo(
@@ -225,78 +226,17 @@ function Body({ target, onClose }: { target: ReconcileTarget; onClose: () => voi
           </div>
         )}
 
-        {/* ── Per-order breakdown ──────────────────────────────────────── */}
-        <div className="border border-line">
-          <table className="w-full text-base">
-            <thead className="border-b border-line bg-surface text-base text-fg">
-              <tr>
-                <th className="px-3 py-3 text-left font-semibold">ECR / client</th>
-                <th className="px-3 py-3 text-left font-semibold">Terms</th>
-                <th className="px-3 py-3 text-right font-semibold">Delivered</th>
-                <th className="px-3 py-3 text-right font-semibold">Empties</th>
-                <th className="px-3 py-3 text-right font-semibold">Driver cash</th>
-                <th className="px-3 py-3 text-right font-semibold">Expected</th>
-              </tr>
-            </thead>
-            <tbody className="divide-y divide-line">
-              {orders.map((o) => {
-                const client = select.client(s, o.clientId);
-                const ev = s.deliveryEvents.find((d) => d.orderId === o.id);
-                const exp = expectedCash(o);
-                const credit = client?.paymentTerms === 'credit';
-                return (
-                  <tr key={o.id} className="bg-surface">
-                    <td className="px-3 py-3">
-                      <div className="flex items-center gap-2">
-                        <EcrTag value={o.ecr ?? '—'} />
-                        <StatusPill status={o.status} />
-                      </div>
-                      <div className="mt-1 truncate text-base text-fg-muted">{client?.name}</div>
-                    </td>
-                    <td className="px-3 py-3">
-                      <Badge tone={credit ? 'info' : 'neutral'}>{client?.paymentTerms ?? '—'}</Badge>
-                    </td>
-                    <td className="px-3 py-3 text-right tabular-nums text-fg">
-                      <Qty value={orderCylinders(o, 'qtyDelivered')} />
-                    </td>
-                    <td className="px-3 py-3 text-right tabular-nums text-fg-muted">
-                      <Qty value={orderCylinders(o, 'qtyReturned')} />
-                    </td>
-                    <td className="px-3 py-3 text-right tabular-nums text-fg-muted">
-                      <Money value={ev?.cashCollected ?? 0} />
-                    </td>
-                    <td className="px-3 py-3 text-right tabular-nums font-medium text-fg">
-                      {credit ? (
-                        <span className="text-info-fg" title="Credit client — invoiced, no cash at the gate">
-                          <Money value={0} />
-                        </span>
-                      ) : (
-                        <Money value={exp} />
-                      )}
-                    </td>
-                  </tr>
-                );
-              })}
-            </tbody>
-            <tfoot>
-              <tr className="border-t border-line bg-surface">
-                <td className="px-3 py-3 text-base text-fg-muted" colSpan={4}>
-                  Credit clients contribute Rs 0 — their cylinders invoice against the account.
-                </td>
-                <td className="px-3 py-3 text-right tabular-nums text-fg-muted">
-                  <Money value={driverCash} />
-                </td>
-                <td className="px-3 py-3 text-right text-lg tabular-nums font-semibold text-fg">
-                  <Money value={expected} />
-                </td>
-              </tr>
-            </tfoot>
-          </table>
-        </div>
-
         {/* ── Phase: count ─────────────────────────────────────────────── */}
         {phase === 'count' && (
-          <div className="mt-6 border border-line bg-surface p-5">
+          <div className="border border-line bg-surface p-5">
+            {/* The one figure the counted number is measured against. The
+                per-order evidence behind it is under the toggle below. */}
+            <p className="mb-3 text-base text-fg-muted">
+              {t('Expected')}{' '}
+              <span className="font-mono tabular-nums text-fg">
+                <Money value={expected} />
+              </span>
+            </p>
             <Field label={t('Cash physically counted at the gate (PKR)')}>
               <Input
                 autoFocus
@@ -403,7 +343,7 @@ function Body({ target, onClose }: { target: ReconcileTarget; onClose: () => voi
 
         {/* ── Phase: held ──────────────────────────────────────────────── */}
         {phase === 'held' && (
-          <div className="mt-6 border border-danger bg-surface p-5">
+          <div className="border border-danger bg-surface p-5">
             <div className="flex items-center gap-2">
               <Icons.Lock className="h-5 w-5 text-danger" />
               <span className="text-xl font-semibold text-danger-fg">
@@ -459,7 +399,7 @@ function Body({ target, onClose }: { target: ReconcileTarget; onClose: () => voi
 
         {/* ── Phase: posting ───────────────────────────────────────────── */}
         {phase === 'posting' && (
-          <div className="mt-6 border border-line bg-surface p-5">
+          <div className="border border-line bg-surface p-5">
             <div className="flex items-center justify-between gap-3">
               <div className="flex items-center gap-2">
                 <Icons.Database className="h-5 w-5 text-fg-muted" />
@@ -522,12 +462,93 @@ function Body({ target, onClose }: { target: ReconcileTarget; onClose: () => voi
           </div>
         )}
 
-        <p className="mt-6 border-t border-line pt-4 text-base leading-relaxed text-fg-muted">
-          <span className="font-semibold text-fg">In short:</span> a matched cash
-          reconciliation is the only event that enqueues an Oracle post. Dispatch allocates the ECR;
-          delivery and confirmation capture the evidence; this screen releases the money. Nothing
-          else in the system can create an ERP document.
-        </p>
+        {/* ── Per-order breakdown, folded away ─────────────────────────── */}
+        {/* The cashier's job is one number and its variance. The evidence
+            behind the expected figure is available, not in the way. */}
+        <button
+          type="button"
+          onClick={() => setDetailOpen((v) => !v)}
+          aria-expanded={detailOpen}
+          className="mt-6 flex w-full items-center justify-between gap-3 border border-line bg-surface px-4 py-3 text-base font-medium text-fg hover:bg-surface-high focus:outline-none focus-visible:ring-1 focus-visible:ring-accent"
+        >
+          <span>
+            {t('Show the detail')}{' '}
+            <span className="font-normal text-fg-muted">
+              ({orders.length} {orders.length === 1 ? 'order' : 'orders'})
+            </span>
+          </span>
+          <Icons.ChevronDown className={`h-4 w-4 text-fg-muted ${detailOpen ? 'rotate-180' : ''}`} />
+        </button>
+
+        {detailOpen && (
+        <div className="mt-3 border border-line">
+          <table className="w-full text-base">
+            <thead className="border-b border-line bg-surface text-base text-fg">
+              <tr>
+                <th className="px-3 py-3 text-left font-semibold">ECR / client</th>
+                <th className="px-3 py-3 text-left font-semibold">Terms</th>
+                <th className="px-3 py-3 text-right font-semibold">Delivered</th>
+                <th className="px-3 py-3 text-right font-semibold">Empties</th>
+                <th className="px-3 py-3 text-right font-semibold">Driver cash</th>
+                <th className="px-3 py-3 text-right font-semibold">Expected</th>
+              </tr>
+            </thead>
+            <tbody className="divide-y divide-line">
+              {orders.map((o) => {
+                const client = select.client(s, o.clientId);
+                const ev = s.deliveryEvents.find((d) => d.orderId === o.id);
+                const exp = expectedCash(o);
+                const credit = client?.paymentTerms === 'credit';
+                return (
+                  <tr key={o.id} className="bg-surface">
+                    <td className="px-3 py-3">
+                      <div className="flex items-center gap-2">
+                        <EcrTag value={o.ecr ?? '—'} />
+                        <StatusPill status={o.status} />
+                      </div>
+                      <div className="mt-1 truncate text-base text-fg-muted">{client?.name}</div>
+                    </td>
+                    <td className="px-3 py-3">
+                      <Badge tone={credit ? 'info' : 'neutral'}>{client?.paymentTerms ?? '—'}</Badge>
+                    </td>
+                    <td className="px-3 py-3 text-right tabular-nums text-fg">
+                      <Qty value={orderCylinders(o, 'qtyDelivered')} />
+                    </td>
+                    <td className="px-3 py-3 text-right tabular-nums text-fg-muted">
+                      <Qty value={orderCylinders(o, 'qtyReturned')} />
+                    </td>
+                    <td className="px-3 py-3 text-right tabular-nums text-fg-muted">
+                      <Money value={ev?.cashCollected ?? 0} />
+                    </td>
+                    <td className="px-3 py-3 text-right tabular-nums font-medium text-fg">
+                      {credit ? (
+                        <span className="text-info-fg" title="Credit client — invoiced, no cash at the gate">
+                          <Money value={0} />
+                        </span>
+                      ) : (
+                        <Money value={exp} />
+                      )}
+                    </td>
+                  </tr>
+                );
+              })}
+            </tbody>
+            <tfoot>
+              <tr className="border-t border-line bg-surface">
+                <td className="px-3 py-3 text-base text-fg-muted" colSpan={4}>
+                  Credit clients contribute Rs 0 — their cylinders invoice against the account.
+                </td>
+                <td className="px-3 py-3 text-right tabular-nums text-fg-muted">
+                  <Money value={driverCash} />
+                </td>
+                <td className="px-3 py-3 text-right text-lg tabular-nums font-semibold text-fg">
+                  <Money value={expected} />
+                </td>
+              </tr>
+            </tfoot>
+          </table>
+        </div>
+        )}
       </div>
 
       {/* ── Confirmation modal: says what happens next ─────────────────── */}

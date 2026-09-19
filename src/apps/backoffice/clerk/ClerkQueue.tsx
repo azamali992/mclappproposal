@@ -1,14 +1,14 @@
 // ─── ClerkQueue — the warehouse dispatch desk ────────────────────────────────
-// The four-stage pipeline (Placed → Filled → Assigned → Dispatched) as lanes or
-// as one dense table, with the three verbs that move an order along it. Every
-// mutation goes through api.*; every rejection is shown verbatim, because the
-// rejections are the point.
+// One list, one button per row. The row shows who it is for, what they want and
+// where the order has got to; the button is the single next step — fill, then
+// assign, then dispatch, then it is done. Every mutation goes through api.*;
+// every rejection is shown verbatim, because the rejections are the point.
 //
-// Self-collections stand apart: the client's own van is coming, so there is no
-// vehicle, no route and no driver. They get their own lane at the top of the
-// board with their own two verbs — release, then record the handover.
+// Self-collections sit in the same list under a plain Collection tag. The
+// client's own van is coming, so there is no vehicle, route or driver: their
+// two steps are release (where the ECR is burned) and record the handover.
 //
-// Keyboard (the clerk does this 200 times a day):
+// Keyboard, kept but no longer advertised (the clerk does this 200 times a day):
 //   /  search      ↑ ↓ / j k  move       Enter open       Esc close
 //   F  fill        A  assign             D  dispatch      C  cancel
 //   R  release for collection            H  record the handover
@@ -22,25 +22,13 @@ import {
   select,
   RuleError,
   orderCylinders,
-  orderValue,
-  serviceChargeTotal,
 } from '../../../core/store';
 import { canTransition, STATUS_LABEL } from '../../../core/stateMachine';
-import { financialYear } from '../../../core/ecr';
 import { Button, Money, NumberStepper } from '../../../ui/primitives';
-import { Search, Truck, Warehouse, Clipboard, X, Alert, Box, CheckCircle } from '../../../ui/icons';
+import { Search, Truck, X, Alert, Box } from '../../../ui/icons';
 import { useT } from '../../../i18n';
 import OrderTable from '../shared/OrderTable';
-import {
-  EcrText,
-  OrderStatusPill,
-  OriginTag,
-  TONE_CLASS,
-  ageLabel,
-  cylindersOf,
-  fmtDate,
-  useRuleToast,
-} from '../shared/OrderTable';
+import { TONE_CLASS, fmtDate, useRuleToast } from '../shared/OrderTable';
 import OrderDetail from './OrderDetail';
 import DispatchModal from './DispatchModal';
 import CollectionModal from './CollectionModal';
@@ -52,70 +40,6 @@ const asNumber = (v: any): number => {
   const n = Number(raw);
   return Number.isFinite(n) ? n : 0;
 };
-
-// ─── Lanes ───────────────────────────────────────────────────────────────────
-
-type Verb = 'fill' | 'assign' | 'dispatch' | 'release' | 'collect';
-
-interface Lane {
-  status: OrderStatus;
-  title: string;
-  hint: string;
-  verb?: Verb;
-  verbLabel?: string;
-}
-
-const LANES: Lane[] = [
-  { status: 'PLACED', title: 'Placed', hint: 'Awaiting warehouse review', verb: 'fill', verbLabel: 'Review & fill' },
-  { status: 'FILLED', title: 'Filled', hint: 'Staged — needs a vehicle', verb: 'assign', verbLabel: 'Assign' },
-  { status: 'ASSIGNED', title: 'Assigned', hint: 'Loaded — no ECR yet', verb: 'dispatch', verbLabel: 'Dispatch' },
-  { status: 'DISPATCHED', title: 'Dispatched', hint: 'ECR allocated · on the road', verbLabel: undefined },
-];
-
-/**
- * A self-collection never touches a vehicle, so it never enters the Assigned
- * lane. Its three steps are fill → release (this is where the ECR is burned)
- * → record the handover when the client's van turns up.
- */
-function collectionLane(order: Order): Lane {
-  switch (order.status) {
-    case 'PLACED':
-      return {
-        status: 'PLACED',
-        title: 'Placed',
-        hint: 'Not filled yet',
-        verb: 'fill',
-        verbLabel: 'Review & fill',
-      };
-    case 'FILLED':
-      return {
-        status: 'FILLED',
-        title: 'Filled',
-        hint: 'Staged — waiting to be released',
-        verb: 'release',
-        verbLabel: 'Release for collection',
-      };
-    case 'DISPATCHED':
-      return {
-        status: 'DISPATCHED',
-        title: 'Released',
-        hint: 'ECR allocated · waiting for the client’s van',
-        verb: 'collect',
-        verbLabel: 'Record collection',
-      };
-    default:
-      return { status: order.status, title: 'Collection', hint: '', verbLabel: undefined };
-  }
-}
-
-/** Says, in one glance, that nobody from MCL is driving this one anywhere. */
-function CollectionTag() {
-  return (
-    <span className={`inline-flex whitespace-nowrap border px-2 py-0.5 text-base ${TONE_CLASS.info}`}>
-      Client collects
-    </span>
-  );
-}
 
 // ─── Buttons (local, so the screen never waits on the design agent) ──────────
 
@@ -151,41 +75,6 @@ function Btn({
     >
       {children}
     </Button>
-  );
-}
-
-function Tile({
-  label,
-  value,
-  sub,
-  tone = 'neutral',
-}: {
-  label: string;
-  value: React.ReactNode;
-  sub?: React.ReactNode;
-  tone?: 'neutral' | 'warn';
-}) {
-  return (
-    <div className="min-w-0 flex-1 border border-line bg-surface px-4 py-3">
-      <div className="text-base text-fg-muted">{label}</div>
-      <div
-        className={`mt-1 font-mono text-xl tabular-nums leading-tight ${
-          tone === 'warn' ? 'text-warn-fg' : 'text-fg'
-        }`}
-      >
-        {value}
-      </div>
-      {sub && <div className="truncate text-base text-fg-muted">{sub}</div>}
-    </div>
-  );
-}
-
-function Shortcut({ k, children }: { k: string; children: React.ReactNode }) {
-  return (
-    <span className="whitespace-nowrap">
-      <kbd className="border border-line bg-surface px-1.5 font-mono text-base text-fg">{k}</kbd>{' '}
-      <span className="text-base text-fg-muted">{children}</span>
-    </span>
   );
 }
 
@@ -727,224 +616,34 @@ function CancelModal({ orderId, onClose }: { orderId: number; onClose: () => voi
   );
 }
 
-// ─── ECR counter strip ───────────────────────────────────────────────────────
-
-function EcrCounters({ locationId, highlightKey }: { locationId: number; highlightKey?: string | null }) {
-  const s = useStore((st) => st);
-  const yy = financialYear();
-
-  const rows = Object.entries(s.ecrSequences)
-    .map(([k, next]) => {
-      const [year, ll, bb] = k.split('|');
-      return {
-        k,
-        year,
-        ll,
-        bb,
-        next,
-        location: s.locations.find((l) => l.code === ll),
-        book: s.bookTypes.find((b) => b.code === bb),
-      };
-    })
-    .filter((r) => r.year === yy && r.location?.id === locationId)
-    .sort((a, b) => a.bb.localeCompare(b.bb));
-
-  return (
-    <section className="border border-line bg-surface p-4">
-      <div className="mb-3">
-        <h2 className="text-lg font-semibold text-fg">
-          Next ECR number in each book — {s.locations.find((l) => l.id === locationId)?.name}
-        </h2>
-        <p className="text-base text-fg-muted">
-          Financial year {yy}. Only a confirmed dispatch moves one of these on.
-        </p>
-      </div>
-      <div className="grid grid-cols-2 gap-3 lg:grid-cols-3 xl:grid-cols-5">
-        {rows.map((r) => {
-          const on = highlightKey === r.k;
-          return (
-            <div
-              key={r.k}
-              className={`border border-line px-3 py-2.5 ${on ? 'bg-surface-high' : 'bg-surface'}`}
-            >
-              <div className="truncate text-base text-fg-muted">{r.book?.name ?? `Book ${r.bb}`}</div>
-              <div className="font-mono text-lg tabular-nums">
-                <span className="text-fg-muted">
-                  {r.year} {r.ll} {r.bb}{' '}
-                </span>
-                <span className={on ? 'font-semibold text-fg' : 'text-fg'}>
-                  {String(r.next).padStart(4, '0')}
-                </span>
-              </div>
-              <div className="text-base text-fg-muted">
-                {r.next - 1} issued this year{on ? ' · next for this order' : ''}
-              </div>
-            </div>
-          );
-        })}
-      </div>
-    </section>
-  );
-}
-
-// ─── Lane card ───────────────────────────────────────────────────────────────
-
-function LaneCard({
-  order,
-  lane,
-  selected,
-  collection = false,
-  onSelect,
-  onVerb,
-  onCancel,
-  onCharges,
-}: {
-  order: Order;
-  lane: Lane;
-  selected: boolean;
-  /** Renders the collection markings and the stage caption. */
-  collection?: boolean;
-  onSelect: () => void;
-  onVerb: () => void;
-  onCancel: () => void;
-  onCharges?: () => void;
-}) {
-  const s = useStore((st) => st);
-  const client = select.client(s, order.clientId);
-  const vehicle = select.vehicle(s, order.vehicleId);
-  const driver = select.user(s, order.driverId);
-  const route = select.route(s, order.routeId);
-  const short = order.lines.some((l) => (l.qtyLoaded ?? l.qtyOrdered) < l.qtyOrdered);
-  const service = serviceChargeTotal(order);
-
-  return (
-    <article
-      tabIndex={0}
-      onClick={onSelect}
-      onKeyDown={(e) => {
-        if (e.key === 'Enter') {
-          e.preventDefault();
-          onSelect();
-        }
-      }}
-      aria-selected={selected}
-      className={`cursor-pointer border bg-surface p-3.5 text-left outline-none ${
-        selected ? 'border-line bg-surface-high' : 'border-line hover:bg-surface-high'
-      }`}
-    >
-      <div className="flex flex-wrap items-center gap-2">
-        <span className="font-mono text-base tabular-nums text-fg-muted">#{order.id}</span>
-        <OriginTag origin={order.origin} />
-        {collection && <CollectionTag />}
-        <span
-          className="ms-auto font-mono text-base tabular-nums text-fg-muted"
-          title="Time since the order was placed"
-        >
-          waiting {ageLabel(order.createdAt)}
-        </span>
-      </div>
-
-      <div className={`mt-2 truncate text-lg text-fg ${selected ? 'font-bold' : 'font-semibold'}`}>
-        {client?.name}
-      </div>
-      <div className="truncate text-base text-fg-muted">
-        {client?.area} ·{' '}
-        <span className={client?.paymentTerms === 'credit' ? 'text-warn-fg' : 'text-success-fg'}>
-          {client?.paymentTerms === 'credit' ? 'Credit' : 'Cash'}
-        </span>{' '}
-        · wanted {fmtDate(order.requestedDate)}
-      </div>
-
-      <ul className="mt-3 space-y-1 border-t border-line pt-3">
-        {order.lines.map((l) => {
-          const p = select.product(s, l.productId);
-          const qty = l.qtyLoaded ?? l.qtyOrdered;
-          return (
-            <li key={l.id} className="flex items-baseline gap-2 text-base">
-              <span className="min-w-0 flex-1 truncate text-fg">
-                {p?.name} <span className="text-fg-muted">{p?.size}</span>
-              </span>
-              <span className="font-mono tabular-nums text-fg">{qty}</span>
-              {l.qtyLoaded != null && l.qtyLoaded < l.qtyOrdered && (
-                <span className="font-mono tabular-nums text-warn-fg">/{l.qtyOrdered}</span>
-              )}
-            </li>
-          );
-        })}
-      </ul>
-
-      {collection ? (
-        <div className="mt-3 flex flex-wrap items-center gap-x-3 gap-y-1 border-t border-line pt-3 text-base text-fg-muted">
-          <span className="text-fg">{lane.title}</span>
-          <span>{lane.hint}</span>
-        </div>
-      ) : (
-        (vehicle || route) && (
-          <div className="mt-3 flex flex-wrap items-center gap-x-3 gap-y-1 border-t border-line pt-3 text-base text-fg-muted">
-            <span className="font-mono text-fg-muted">{vehicle?.registration}</span>
-            <span>{route?.code}</span>
-            <span>{driver?.name}</span>
-          </div>
-        )
-      )}
-
-      <div className="mt-3 flex flex-wrap items-center gap-3 border-t border-line pt-3">
-        <span className="font-mono text-base tabular-nums text-fg">{cylindersOf(order)} cylinders</span>
-        <span className="font-mono text-base tabular-nums text-fg">
-          <Money value={orderValue(order)} />
-        </span>
-        {short && <span className={`border px-2 text-base ${TONE_CLASS.warn}`}>short fill</span>}
-        {order.status === 'DISPATCHED' ? (
-          <span className="ms-auto">
-            <EcrText ecr={order.ecr} />
-          </span>
-        ) : (
-          <span className="ms-auto text-base text-fg-muted">No ECR number yet</span>
-        )}
-        {service > 0 && (
-          <span className="w-full text-base text-fg-muted">
-            goods <Money value={orderValue(order) - service} /> + service work{' '}
-            <Money value={service} />
-          </span>
-        )}
-      </div>
-
-      <div className="mt-3 flex gap-2">
-        {lane.verb && (
-          <Btn
-            kind={lane.verb === 'assign' || lane.verb === 'fill' ? 'secondary' : 'primary'}
-            full
-            onClick={() => {
-              onSelect();
-              onVerb();
-            }}
-          >
-            {lane.verbLabel}
-          </Btn>
-        )}
-        {onCharges && (
-          <Btn
-            kind="ghost"
-            onClick={() => {
-              onSelect();
-              onCharges();
-            }}
-            title="Add nozzle changes, repaints, repairs — they go on this client's bill"
-          >
-            <Box className="h-4 w-4" /> {service > 0 ? `Charges (${order.serviceCharges.length})` : 'Charges'}
-          </Btn>
-        )}
-        {lane.verb && (
-          <Btn kind="ghost" onClick={onCancel} title="Cancel this order">
-            <X className="h-4 w-4" />
-          </Btn>
-        )}
-      </div>
-    </article>
-  );
-}
-
 // ─── Screen ──────────────────────────────────────────────────────────────────
+
+type Verb = 'fill' | 'assign' | 'dispatch' | 'release' | 'collect';
+
+/** Everything the clerk still has work in front of them for, at one location. */
+const QUEUE_STATUSES: OrderStatus[] = ['PLACED', 'FILLED', 'ASSIGNED', 'DISPATCHED'];
+
+/**
+ * The one next step for an order — the only button its row ever shows.
+ * A delivery walks fill → assign → dispatch. A collection has no vehicle, so it
+ * walks fill → release (where the ECR is burned) → record the handover.
+ * `null` means there is nothing left for the clerk to do.
+ */
+function nextAction(order: Order): { verb: Verb; label: string } | null {
+  const collects = order.fulfilment === 'collection';
+  switch (order.status) {
+    case 'PLACED':
+      return { verb: 'fill', label: 'Fill' };
+    case 'FILLED':
+      return collects ? { verb: 'release', label: 'Release' } : { verb: 'assign', label: 'Assign' };
+    case 'ASSIGNED':
+      return collects ? null : { verb: 'dispatch', label: 'Dispatch' };
+    case 'DISPATCHED':
+      return collects ? { verb: 'collect', label: 'Record collection' } : null;
+    default:
+      return null;
+  }
+}
 
 export function ClerkQueue() {
   const t = useT();
@@ -952,10 +651,11 @@ export function ClerkQueue() {
   const me = useCurrentUser();
   const toast = useRuleToast();
 
-  const [locationId, setLocationId] = useState<number>(me.locationId ?? 1);
-  const [view, setView] = useState<'lanes' | 'table'>('lanes');
+  // Every order in the demo sits at one location, so the picker was a control
+  // that could only ever be set one way. The filter stays, the widget does not.
+  const locationId = me.locationId ?? 1;
+
   const [query, setQuery] = useState('');
-  const [work, setWork] = useState<'all' | 'delivery' | 'collection'>('all');
   const [selectedId, setSelectedId] = useState<number | null>(null);
   const [detailOpen, setDetailOpen] = useState(false);
   const [fillFor, setFillFor] = useState<number | null>(null);
@@ -990,59 +690,27 @@ export function ClerkQueue() {
     [query, s],
   );
 
-  // The four pipeline lanes carry deliveries only — a collection has no vehicle
-  // to be assigned to, so it would sit in the Filled lane for ever under a verb
-  // that does not apply to it.
-  const byLane = useMemo(() => {
-    const at = s.orders.filter((o) => o.locationId === locationId && o.fulfilment !== 'collection');
-    const map: Record<string, Order[]> = {};
-    for (const lane of LANES) {
-      map[lane.status] = at
-        .filter((o) => o.status === lane.status && matches(o))
-        .sort((a, b) => a.createdAt.localeCompare(b.createdAt));
-    }
-    return map;
-  }, [s.orders, locationId, matches]);
-
-  /** Orders whose client is coming to fetch them — straight from the store. */
-  const collections = useMemo(() => {
-    const rank: Record<string, number> = { DISPATCHED: 0, FILLED: 1, PLACED: 2 };
-    return select
-      .collectionQueue(s, locationId)
-      .filter(matches)
-      .sort(
-        (a, b) =>
-          (rank[a.status] ?? 9) - (rank[b.status] ?? 9) || a.createdAt.localeCompare(b.createdAt),
-      );
-  }, [s, locationId, matches]);
-
-  const awaitingVan = collections.filter((o) => o.status === 'DISPATCHED');
-  const showLanes = work !== 'collection';
-  const showCollections = work !== 'delivery';
-
-  const flat = useMemo(
-    () => [
-      ...(showCollections ? collections : []),
-      ...(showLanes ? LANES.flatMap((l) => byLane[l.status] ?? []) : []),
-    ],
-    [byLane, collections, showLanes, showCollections],
+  /** Deliveries and collections in one list: work first, then oldest first. */
+  const atLocation = useMemo(
+    () => s.orders.filter((o) => o.locationId === locationId && QUEUE_STATUSES.includes(o.status)),
+    [s.orders, locationId],
   );
+
+  const list = useMemo(
+    () =>
+      atLocation
+        .filter(matches)
+        .slice()
+        .sort(
+          (a, b) =>
+            (nextAction(a) ? 0 : 1) - (nextAction(b) ? 0 : 1) ||
+            a.createdAt.localeCompare(b.createdAt),
+        ),
+    [atLocation, matches],
+  );
+
+  const waiting = useMemo(() => atLocation.filter((o) => nextAction(o)).length, [atLocation]);
   const selected = selectedId == null ? undefined : select.order(s, selectedId);
-
-  const queueTotals = useMemo(() => {
-    const open = [...(byLane.PLACED ?? []), ...(byLane.FILLED ?? []), ...(byLane.ASSIGNED ?? [])];
-    return {
-      open: open.length,
-      cylinders: open.reduce((t, o) => t + cylindersOf(o), 0),
-      value: open.reduce((t, o) => t + orderValue(o), 0),
-      dispatched: (byLane.DISPATCHED ?? []).length,
-      dispatchedCyl: (byLane.DISPATCHED ?? []).reduce((t, o) => t + cylindersOf(o), 0),
-    };
-  }, [byLane]);
-
-  const highlightKey = selected
-    ? `${financialYear()}|${select.location(s, selected.locationId)?.code}|${select.bookType(s, selected.bookTypeId)?.code}`
-    : null;
 
   // ── Verbs ───────────────────────────────────────────────────────────────
   const openVerb = useCallback(
@@ -1137,6 +805,7 @@ export function ClerkQueue() {
   );
 
   // ── Keyboard ────────────────────────────────────────────────────────────
+  // Unchanged. The legend that used to advertise it at the bottom is gone.
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
       const el = e.target as HTMLElement | null;
@@ -1159,12 +828,12 @@ export function ClerkQueue() {
         return;
       }
       if (e.key === 'ArrowDown' || e.key === 'j' || e.key === 'ArrowUp' || e.key === 'k') {
-        if (!flat.length) return;
+        if (!list.length) return;
         e.preventDefault();
         const dir = e.key === 'ArrowDown' || e.key === 'j' ? 1 : -1;
-        const i = flat.findIndex((o) => o.id === selectedId);
-        const next = i === -1 ? 0 : Math.min(flat.length - 1, Math.max(0, i + dir));
-        setSelectedId(flat[next].id);
+        const i = list.findIndex((o) => o.id === selectedId);
+        const next = i === -1 ? 0 : Math.min(list.length - 1, Math.max(0, i + dir));
+        setSelectedId(list[next].id);
         return;
       }
       if (e.key === 'Enter') {
@@ -1184,312 +853,61 @@ export function ClerkQueue() {
     };
     window.addEventListener('keydown', onKey);
     return () => window.removeEventListener('keydown', onKey);
-  }, [flat, selectedId, selected, openVerb, modalOpen]);
-
-  const inputCls =
-    'border border-line bg-surface px-3 py-2 text-base text-fg placeholder:text-fg-muted focus:border-fg focus:outline-none';
+  }, [list, selectedId, selected, openVerb, modalOpen]);
 
   return (
     <div className="flex h-full min-h-0 flex-col bg-surface">
-      {/* ── Toolbar ──────────────────────────────────────────────────────── */}
+      {/* ── Title, one sentence, one search box ──────────────────────────── */}
       <header className="flex-none border-b border-line bg-surface px-4 py-3">
         <div className="flex flex-wrap items-center gap-3">
-          <div className="flex items-center gap-2">
-            <Warehouse className="h-5 w-5 text-fg-muted" />
-            <div>
-              <h1 className="text-xl font-semibold leading-tight text-fg">{t('Dispatch queue')}</h1>
-              <p className="text-base text-fg-muted">
-                {t('Fill, assign, dispatch — the ECR is issued at the last step, never before.')}
-              </p>
-            </div>
+          <div className="min-w-0">
+            <h1 className="text-xl font-semibold leading-tight text-fg">{t('Dispatch queue')}</h1>
+            <p className="text-base text-fg-muted">{t('{n} orders waiting', { n: waiting })}</p>
           </div>
 
-          <div className="ms-auto flex flex-wrap items-center gap-2">
-            <div className="relative">
-              <Search className="pointer-events-none absolute start-3 top-1/2 h-4 w-4 -translate-y-1/2 text-fg-muted" />
-              <input
-                ref={searchRef}
-                value={query}
-                onChange={(e) => setQuery(e.target.value)}
-                placeholder="Search by client, ECR, vehicle or product"
-                aria-label="Search the queue"
-                className={`${inputCls} w-80 ps-10`}
-              />
-            </div>
-
-            <select
-              aria-label="Location"
-              className={inputCls}
-              value={locationId}
-              onChange={(e) => setLocationId(Number(e.target.value))}
-            >
-              {s.locations.map((l) => (
-                <option key={l.id} value={l.id}>
-                  {l.name}
-                </option>
-              ))}
-            </select>
-
-            <div className="flex divide-x divide-line border border-line">
-              {(
-                [
-                  ['all', t('All work')],
-                  ['delivery', t('Deliveries')],
-                  ['collection', t('Collections')],
-                ] as const
-              ).map(([v, label]) => (
-                <button
-                  key={v}
-                  type="button"
-                  onClick={() => setWork(v)}
-                  aria-pressed={work === v}
-                  className={`px-4 py-2 text-base ${
-                    work === v
-                      ? 'bg-surface-high font-semibold text-fg'
-                      : 'bg-surface text-fg hover:bg-surface-high'
-                  }`}
-                >
-                  {label}
-                  {v === 'collection' && collections.length > 0 && (
-                    <span className="ms-2 font-mono tabular-nums">{collections.length}</span>
-                  )}
-                </button>
-              ))}
-            </div>
-
-            <div className="flex divide-x divide-line border border-line">
-              {(['lanes', 'table'] as const).map((v) => (
-                <button
-                  key={v}
-                  type="button"
-                  onClick={() => setView(v)}
-                  aria-pressed={view === v}
-                  className={`px-4 py-2 text-base ${
-                    view === v
-                      ? 'bg-surface-high font-semibold text-fg'
-                      : 'bg-surface text-fg hover:bg-surface-high'
-                  }`}
-                >
-                  {v === 'lanes' ? 'Columns' : 'One list'}
-                </button>
-              ))}
-            </div>
+          <div className="relative ms-auto">
+            <Search className="pointer-events-none absolute start-3 top-1/2 h-4 w-4 -translate-y-1/2 text-fg-muted" />
+            <input
+              ref={searchRef}
+              value={query}
+              onChange={(e) => setQuery(e.target.value)}
+              placeholder={t('Search')}
+              aria-label={t('Search')}
+              className="w-72 border border-line bg-surface px-3 py-2 ps-10 text-base text-fg placeholder:text-fg-muted focus:border-fg focus:outline-none"
+            />
           </div>
-        </div>
-
-        <div className="mt-3 flex flex-wrap gap-2">
-          <Tile label="Open in the queue" value={queueTotals.open} sub="placed + filled + assigned" />
-          <Tile label="Cylinders to move" value={queueTotals.cylinders} sub="staged or requested" />
-          <Tile
-            label="Value in the queue"
-            value={<Money value={queueTotals.value} />}
-            sub="at loaded quantities"
-          />
-          <Tile
-            label="Dispatched today"
-            value={queueTotals.dispatched}
-            sub={`${queueTotals.dispatchedCyl} cylinders on the road`}
-          />
-          <Tile
-            label={t('Waiting for the client’s van')}
-            value={awaitingVan.length}
-            tone={awaitingVan.length ? 'warn' : 'neutral'}
-            sub={`${collections.length} self-collection(s) in the queue`}
-          />
-          <Tile
-            label="Acting as"
-            value={<span className="text-lg">{me.name}</span>}
-            sub={`${me.role} · every action is audited`}
-          />
         </div>
       </header>
 
-      {/* ── Body ─────────────────────────────────────────────────────────── */}
+      {/* ── One list. One button per row. ────────────────────────────────── */}
       <div className="min-h-0 flex-1 overflow-y-auto px-4 py-3">
-        <EcrCounters locationId={locationId} highlightKey={highlightKey} />
-
-        {showCollections && view === 'lanes' && (
-          <section className="mt-3 border border-line bg-surface">
-            <header className="flex flex-wrap items-baseline gap-x-3 gap-y-1 border-b border-line px-4 py-3">
-              <Box className="h-5 w-5 self-center text-fg-muted" />
-              <h2 className="text-lg font-semibold text-fg">{t('Self-collection counter')}</h2>
-              <span className="font-mono text-lg tabular-nums text-fg">{collections.length}</span>
-              <p className="text-base text-fg-muted">
-                {t(
-                  'The client’s own van comes for these — no vehicle, no route, no driver, and the ex-delivery rate.',
-                )}
-              </p>
-              {awaitingVan.length > 0 && (
-                <span className={`ms-auto border px-2 py-0.5 text-base ${TONE_CLASS.warn}`}>
-                  {t('{n} released and waiting for someone to turn up', { n: awaitingVan.length })}
-                </span>
-              )}
-            </header>
-            <div className="grid gap-3 p-3 lg:grid-cols-2 xl:grid-cols-4">
-              {collections.length === 0 ? (
-                <p className="border border-line px-3 py-6 text-center text-base text-fg-muted lg:col-span-2 xl:col-span-4">
-                  {query
-                    ? t('No self-collections match the search.')
-                    : t('No self-collections at this location today.')}
-                </p>
-              ) : (
-                collections.map((o) => {
-                  const lane = collectionLane(o);
-                  return (
-                    <LaneCard
-                      key={o.id}
-                      order={o}
-                      lane={lane}
-                      collection
-                      selected={selectedId === o.id}
-                      onSelect={() => setSelectedId(o.id)}
-                      onVerb={() => openVerb(o, lane.verb)}
-                      onCancel={() => openVerb(o, 'cancel')}
-                      onCharges={() => {
-                        setSelectedId(o.id);
-                        setDetailOpen(true);
-                      }}
-                    />
-                  );
-                })
-              )}
-            </div>
-          </section>
-        )}
-
-        {showLanes && view === 'lanes' ? (
-          <div className="mt-3 grid gap-3 lg:grid-cols-2 xl:grid-cols-4">
-            {LANES.map((lane) => {
-              const list = byLane[lane.status] ?? [];
-              return (
-                <section key={lane.status} className="flex min-h-0 flex-col border border-line bg-surface">
-                  <header className="border-b border-line px-4 py-3">
-                    <div className="flex items-baseline gap-2">
-                      <h2 className="text-lg font-semibold text-fg">{t(lane.title)}</h2>
-                      <span className="font-mono text-lg tabular-nums text-fg">{list.length}</span>
-                    </div>
-                    <p className="truncate text-base text-fg-muted">{t(lane.hint)}</p>
-                  </header>
-                  <div className="flex flex-col gap-3 p-3">
-                    {list.length === 0 ? (
-                      <p className="border border-line px-3 py-6 text-center text-base text-fg-muted">
-                        {query ? 'Nothing here matches the search.' : 'Lane clear.'}
-                      </p>
-                    ) : (
-                      list.map((o) => (
-                        <LaneCard
-                          key={o.id}
-                          order={o}
-                          lane={lane}
-                          selected={selectedId === o.id}
-                          onSelect={() => setSelectedId(o.id)}
-                          onVerb={() => openVerb(o, lane.verb)}
-                          onCancel={() => openVerb(o, 'cancel')}
-                          onCharges={() => {
-                            setSelectedId(o.id);
-                            setDetailOpen(true);
-                          }}
-                        />
-                      ))
-                    )}
-                  </div>
-                </section>
-              );
-            })}
-          </div>
-        ) : view === 'table' ? (
-          <div className="mt-3">
-            <OrderTable
-              orders={flat}
-              dense
-              selectedId={selectedId}
-              onSelect={(o) => {
-                setSelectedId(o.id);
-                setDetailOpen(true);
-              }}
-              columns={[
-                'status',
-                'fulfilment',
-                'ecr',
-                'client',
-                'origin',
-                'lines',
-                'cylinders',
-                'value',
-                'vehicle',
-                'driver',
-                'age',
-              ]}
-              empty="No orders at this location match the search."
-              rowActions={(o) => {
-                const collection = o.fulfilment === 'collection';
-                return (
-                  <div className="flex justify-end gap-2">
-                    {o.status === 'PLACED' && (
-                      <Btn kind="secondary" onClick={() => openVerb(o, 'fill')}>
-                        Fill
-                      </Btn>
-                    )}
-                    {o.status === 'FILLED' &&
-                      (collection ? (
-                        <Btn kind="primary" onClick={() => openVerb(o, 'release')}>
-                          <Box className="h-4 w-4" /> Release for collection
-                        </Btn>
-                      ) : (
-                        <Btn kind="secondary" onClick={() => openVerb(o, 'assign')}>
-                          Assign
-                        </Btn>
-                      ))}
-                    {o.status === 'ASSIGNED' && !collection && (
-                      <Btn kind="primary" onClick={() => openVerb(o, 'dispatch')}>
-                        Dispatch
-                      </Btn>
-                    )}
-                    {o.status === 'DISPATCHED' && collection && (
-                      <Btn kind="primary" onClick={() => openVerb(o, 'collect')}>
-                        <CheckCircle className="h-4 w-4" /> Record collection
-                      </Btn>
-                    )}
-                    <Btn
-                      kind="ghost"
-                      title="Cylinder management charges"
-                      onClick={() => {
-                        setSelectedId(o.id);
-                        setDetailOpen(true);
-                      }}
-                    >
-                      <Box className="h-4 w-4" /> Charges
-                    </Btn>
-                  </div>
-                );
-              }}
-            />
-          </div>
-        ) : null}
+        <OrderTable
+          orders={list}
+          dense
+          selectedId={selectedId}
+          onSelect={(o) => {
+            setSelectedId(o.id);
+            setDetailOpen(true);
+          }}
+          columns={['client', 'lines', 'status', 'value']}
+          empty={t('Nothing in the queue.')}
+          rowActions={(o) => {
+            const next = nextAction(o);
+            if (!next) return null;
+            return (
+              <Btn
+                kind="secondary"
+                onClick={() => {
+                  setSelectedId(o.id);
+                  openVerb(o, next.verb);
+                }}
+              >
+                {t(next.label)}
+              </Btn>
+            );
+          }}
+        />
       </div>
-
-      {/* ── Status bar ───────────────────────────────────────────────────── */}
-      <footer className="flex flex-none flex-wrap items-center gap-x-4 gap-y-1 border-t border-line bg-surface px-4 py-2">
-        <span className="flex items-center gap-2 text-base text-fg-muted">
-          <Clipboard className="h-4 w-4" />
-          {selected ? (
-            <>
-              Selected <span className="font-mono text-fg-muted">#{selected.id}</span>{' '}
-              {select.clientName(s, selected.clientId)} · {STATUS_LABEL[selected.status]}
-              {selected.fulfilment === 'collection' && <> · client collects</>}
-            </>
-          ) : (
-            <>Nothing selected — click a card or press ↓</>
-          )}
-        </span>
-        <span className="ms-auto flex flex-wrap items-center gap-3">
-          <Shortcut k="/">search</Shortcut>
-          <Shortcut k="↑ ↓">move</Shortcut>
-          <Shortcut k="↵">open</Shortcut>
-          <Shortcut k="R">release for collection</Shortcut>
-          <Shortcut k="H">record the handover</Shortcut>
-        </span>
-      </footer>
 
       {/* ── Overlays ─────────────────────────────────────────────────────── */}
       {detailOpen && selected && (
@@ -1497,44 +915,21 @@ export function ClerkQueue() {
           orderId={selected.id}
           onClose={() => setDetailOpen(false)}
           actions={
-            <div className="flex items-center gap-2">
-              <span className="me-auto text-base text-fg-muted">
-                {selected.fulfilment === 'collection' && selected.status === 'FILLED'
-                  ? 'Releasing allocates the ECR permanently — no vehicle is involved.'
-                  : selected.status === 'ASSIGNED'
-                    ? 'Next step allocates the ECR permanently.'
-                    : 'Each step is checked against the state machine and your role.'}
-              </span>
-              {selected.status === 'PLACED' && (
-                <Btn kind="primary" onClick={() => openVerb(selected, 'fill')}>
-                  Review &amp; fill
-                </Btn>
-              )}
-              {selected.status === 'FILLED' &&
-                (selected.fulfilment === 'collection' ? (
-                  <Btn kind="primary" onClick={() => openVerb(selected, 'release')}>
-                    <Box className="h-3.5 w-3.5" /> Release for collection &amp; allocate ECR
-                  </Btn>
-                ) : (
-                  <Btn kind="primary" onClick={() => openVerb(selected, 'assign')}>
-                    Assign vehicle
-                  </Btn>
-                ))}
-              {selected.status === 'ASSIGNED' && selected.fulfilment !== 'collection' && (
-                <Btn kind="primary" onClick={() => openVerb(selected, 'dispatch')}>
-                  <Truck className="h-3.5 w-3.5" /> Confirm dispatch &amp; allocate ECR
-                </Btn>
-              )}
-              {selected.status === 'DISPATCHED' && selected.fulfilment === 'collection' && (
-                <Btn kind="primary" onClick={() => openVerb(selected, 'collect')}>
-                  <CheckCircle className="h-3.5 w-3.5" /> Record collection
-                </Btn>
-              )}
+            <div className="flex items-center justify-end gap-2">
               {canTransition(selected.status, 'CANCELLED') && (
-                <Btn kind="danger" onClick={() => openVerb(selected, 'cancel')}>
-                  Cancel
+                <Btn kind="ghost" onClick={() => openVerb(selected, 'cancel')}>
+                  {t('Cancel')}
                 </Btn>
               )}
+              {(() => {
+                const next = nextAction(selected);
+                if (!next) return null;
+                return (
+                  <Btn kind="primary" onClick={() => openVerb(selected, next.verb)}>
+                    {t(next.label)}
+                  </Btn>
+                );
+              })()}
             </div>
           }
         />

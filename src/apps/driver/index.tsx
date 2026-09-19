@@ -53,7 +53,7 @@ import {
   Qty,
   EcrTag,
 } from '../../ui/primitives';
-import { WifiOff, Wifi, Sync, Logout, Truck, Cylinder, ChevronLeft, ChevronRight } from '../../ui/icons';
+import { WifiOff, Wifi, Sync, Logout, ChevronLeft, ChevronRight } from '../../ui/icons';
 import { useI18n, useT } from '../../i18n';
 
 import TabLogin from './TabLogin';
@@ -295,10 +295,6 @@ export default function DriverTab() {
   const driver = select.user(s, driverId ?? undefined);
 
   const pendingCount = s.queue.filter((q) => q.state === 'pending' || q.state === 'failed').length;
-  const totalLoad = stops
-    .filter((o) => o.status === 'DISPATCHED')
-    .reduce((acc, o) => acc + orderCylinders(o, 'qtyLoaded'), 0);
-
   const markDone = useCallback((orderId: number) => {
     setDone((d) => (d.includes(orderId) ? d : [...d, orderId]));
   }, []);
@@ -372,51 +368,36 @@ export default function DriverTab() {
         </div>
       )}
 
-      {/* ── Header: who, what vehicle, what network ───────────────────────── */}
+      {/* ── Header: who, and what network ─────────────────────────────────
+          The route / vehicle / on-board trio that used to sit here said the
+          same three things as the manifest header two centimetres below it,
+          and the device asset tag under the driver's name said nothing a
+          driver needs mid-run. Both are gone. */}
       <header className="flex shrink-0 items-center gap-4 border-b border-line bg-surface px-4 py-3">
         <div className="flex min-w-0 items-center gap-3">
           <div className="flex h-12 w-12 shrink-0 items-center justify-center rounded-md border border-line text-md font-semibold text-fg">
             {driver?.avatarInitials}
           </div>
-          <div className="min-w-0">
-            <div className="truncate text-md font-semibold leading-tight">{driver?.name}</div>
-            {/* Device label and hardware id: an asset tag, never translated. */}
-            <div className="truncate text-base text-fg-dim">
-              {device?.label} · {device?.deviceId}
-            </div>
-          </div>
-        </div>
-
-        <div className="hidden items-center gap-5 border-s border-line ps-5 lg:flex">
-          <HeaderStat icon={<Truck className="h-4 w-4" />} label={t('Route')} value={route?.code ?? '—'} />
-          <HeaderStat label={t('Vehicle')} value={vehicle?.registration ?? '—'} />
-          <HeaderStat
-            icon={<Cylinder className="h-4 w-4" />}
-            label={t('On board')}
-            value={`${totalLoad}`}
-          />
+          <div className="min-w-0 truncate text-md font-semibold leading-tight">{driver?.name}</div>
         </div>
 
         <div className="ms-auto flex items-center gap-2">
-          {/* Network switch. Plain bordered button, one word and one
-              instruction. Colour is the state, the word carries it. */}
+          {/* Network switch. One word. The "tap to go offline" instruction
+              under it is gone — a bordered button with a radio icon does not
+              need to be told it is tappable. Colour is the state, the word
+              carries it. */}
           <button
             type="button"
             onClick={() => toggleOnline(!s.online)}
             className={
-              'flex min-h-[52px] min-w-[184px] items-center gap-3 rounded-md border px-4 text-start ' +
+              'flex min-h-[52px] items-center gap-3 rounded-md border px-4 text-start ' +
               (s.online
                 ? 'border-line bg-surface text-fg'
                 : 'border-warn bg-warn-soft text-warn-fg')
             }
           >
             {s.online ? <Wifi className="h-6 w-6 shrink-0" /> : <WifiOff className="h-6 w-6 shrink-0" />}
-            <span className="leading-tight">
-              <span className="block text-md font-semibold">{s.online ? t('Online') : t('Offline')}</span>
-              <span className="block text-base text-fg-dim">
-                {s.online ? t('Tap to go offline') : t('Tap to reconnect')}
-              </span>
-            </span>
+            <span className="text-md font-semibold">{s.online ? t('Online') : t('Offline')}</span>
           </button>
 
           <button
@@ -455,7 +436,6 @@ export default function DriverTab() {
           onOpen={setOpenOrderId}
           route={route}
           vehicle={vehicle}
-          totalLoad={totalLoad}
         />
 
         <section className="min-w-0 flex-1 overflow-y-auto bg-app">
@@ -532,19 +512,6 @@ export default function DriverTab() {
           )}
         </div>
       </Sheet>
-    </div>
-  );
-}
-
-function HeaderStat({ icon, label, value }: { icon?: React.ReactNode; label: string; value: string }) {
-  return (
-    <div className="leading-tight">
-      <div className="flex items-center gap-1.5 text-base text-fg-dim">
-        {icon}
-        {label}
-      </div>
-      {/* Route codes and registration plates stay Latin monospace. */}
-      <div className="font-mono text-md font-semibold tabular-nums text-fg">{value}</div>
     </div>
   );
 }

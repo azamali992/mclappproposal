@@ -13,6 +13,7 @@ import type { State } from '../../../core/store';
 import { useStore, select, orderValue, orderCylinders, serviceChargeTotal } from '../../../core/store';
 import { formatEcr } from '../../../core/ecr';
 import { Money, StatusPill, useToast } from '../../../ui/primitives';
+import { useT } from '../../../i18n';
 
 // ─── Tone helpers ────────────────────────────────────────────────────────────
 
@@ -92,6 +93,20 @@ export function FulfilmentTag({ fulfilment }: { fulfilment: Order['fulfilment'] 
       }`}
     >
       {collects ? 'Client collects' : 'Delivery'}
+    </span>
+  );
+}
+
+/**
+ * The one mark a self-collection carries in a shared list. It replaces the
+ * separate lane the clerk's board used to give them: same list, same row shape,
+ * one word to say nobody from MCL is driving this anywhere.
+ */
+export function CollectionTag() {
+  const t = useT();
+  return (
+    <span className={`inline-flex whitespace-nowrap border px-2 py-0.5 text-base ${TONE_CLASS.info}`}>
+      {t('Collection')}
     </span>
   );
 }
@@ -179,7 +194,10 @@ const COLUMN_DEFS: Record<OrderColumn, ColumnDef> = {
       const c = select.client(s, o.clientId);
       return (
         <div className="min-w-0">
-          <div className="truncate font-medium text-fg">{c?.name ?? `Client ${o.clientId}`}</div>
+          <div className="flex min-w-0 items-center gap-2">
+            <span className="truncate font-medium text-fg">{c?.name ?? `Client ${o.clientId}`}</span>
+            {o.fulfilment === 'collection' && <CollectionTag />}
+          </div>
           <div className="truncate text-base text-fg-muted">
             {c?.area ? `${c.area} · ` : ''}
             <span className={c?.paymentTerms === 'credit' ? 'text-warn-fg' : 'text-success-fg'}>
@@ -222,7 +240,7 @@ const COLUMN_DEFS: Record<OrderColumn, ColumnDef> = {
         {o.lines
           .map((l) => {
             const p = select.product(s, l.productId);
-            return `${p?.name ?? 'Item'} ${p?.size ?? ''} ×${l.qtyLoaded ?? l.qtyOrdered}`;
+            return `${l.qtyLoaded ?? l.qtyOrdered} × ${p?.name ?? 'Item'} ${p?.size ?? ''}`.trim();
           })
           .join(' · ')}
       </div>
@@ -302,16 +320,13 @@ const COLUMN_DEFS: Record<OrderColumn, ColumnDef> = {
   },
 };
 
-export const DEFAULT_COLUMNS: OrderColumn[] = [
-  'status',
-  'ecr',
-  'client',
-  'lines',
-  'cylinders',
-  'value',
-  'requested',
-  'age',
-];
+/**
+ * Deliberately short. Who it is for, what they want, where it has got to, what
+ * it is worth — and whatever action the caller hangs off the row. Every other
+ * column is opt-in: pass `columns` if a screen genuinely needs the vehicle, the
+ * route or the age, and expect to justify it.
+ */
+export const DEFAULT_COLUMNS: OrderColumn[] = ['client', 'lines', 'status', 'value'];
 
 // ─── The table ───────────────────────────────────────────────────────────────
 
@@ -342,6 +357,7 @@ export function OrderTable({
   className = '',
 }: OrderTableProps) {
   const s = useStore((st) => st);
+  const t = useT();
   const rowRefs = useRef<(HTMLTableRowElement | null)[]>([]);
 
   const onKeyDown = useCallback(
@@ -370,9 +386,8 @@ export function OrderTable({
 
   if (!orders.length) {
     return (
-      <div className="flex flex-col items-center justify-center gap-1 border border-line bg-surface px-6 py-10 text-center">
-        <div className="text-base font-medium text-fg">{empty ?? 'No orders match this filter'}</div>
-        <div className="text-base text-fg-muted">Clear the filters to see the full list.</div>
+      <div className="flex flex-col items-center justify-center border border-line bg-surface px-6 py-10 text-center">
+        <div className="text-base font-medium text-fg">{empty ?? t('Nothing in the queue.')}</div>
       </div>
     );
   }
@@ -390,17 +405,11 @@ export function OrderTable({
                   COLUMN_DEFS[c].align === 'right' ? 'text-right' : 'text-left'
                 } ${COLUMN_DEFS[c].className ?? ''}`}
               >
-                {COLUMN_DEFS[c].label}
+                {t(COLUMN_DEFS[c].label)}
               </th>
             ))}
-            {rowActions && (
-              <th
-                scope="col"
-                className={`${pad} border-b border-line text-right text-base font-semibold text-fg`}
-              >
-                Actions
-              </th>
-            )}
+            {/* The action column carries no heading — the button says what it is. */}
+            {rowActions && <th scope="col" className={`${pad} border-b border-line`} />}
           </tr>
         </thead>
         <tbody>

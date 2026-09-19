@@ -2,6 +2,11 @@
 // The customer closes their own receipt from their own phone. On paper this was
 // a signature on a carbon copy that nobody could later find.
 //
+// One job: read the numbers, then confirm them. The paragraph explaining what a
+// one-time code is, the paragraph explaining what raising an issue does, and
+// the "delivered by / order #" footnote are gone — the buttons already say
+// both, and the numbers above them are what the dealer is actually checking.
+//
 // Plain build: white ground, hairline rules, no tinted panels or status discs.
 // Direction: logical utilities; the OTP field is pinned dir="ltr" because a
 // one-time code is a Latin-digit sequence.
@@ -127,11 +132,6 @@ export default function ConfirmDelivery({
               {t('Closed at {time} from your phone.', { time: fmtTime(order.confirmedAt, t) })}
             </p>
           )}
-          <p className="mt-2 text-md ltr:leading-relaxed text-fg-muted">
-            {t(
-              'Cash reconciliation and the Oracle posting happen at MCL’s end. Nothing further is needed from you.',
-            )}
-          </p>
         </div>
 
         <div className="flex flex-col gap-3">
@@ -232,20 +232,6 @@ export default function ConfirmDelivery({
       {/* OTP */}
       <section>
         <h2 className="text-lg font-bold text-fg">{t('Confirm by one-time code')}</h2>
-        <p className="mt-1 text-md ltr:leading-relaxed text-fg-muted">
-          {t(
-            'We send a 6-digit code to {number}. Entering it here is your signature — it is recorded against this ECR and cannot be edited afterwards.',
-            { number: client?.contactNumber ?? '' },
-          )}
-          {client?.confirmMethod === 'signature' && (
-            <>
-              {' '}
-              {t(
-                'Your account is normally confirmed by signature on the driver’s tab; confirming here from your own phone works the same way.',
-              )}
-            </>
-          )}
-        </p>
 
         {!demoCode ? (
           <Button variant="primary" size="lg" block className="mt-4" loading={busy} onClick={sendOtp}>
@@ -254,19 +240,12 @@ export default function ConfirmDelivery({
         ) : (
           <div className="mt-4 space-y-4">
             {/* Demo aid — clearly labelled, never present in production */}
-            <div className="rounded-md border border-line-strong p-3">
-              <p className="text-md font-bold text-fg">{t('Demo only · SMS not sent')}</p>
-              <p className="mt-1 flex flex-wrap items-baseline gap-2 text-md text-fg-muted">
-                {t('Code for this delivery:')}
-                <span
-                  className="font-mono text-lg font-bold ltr:tracking-[0.2em] text-fg"
-                  data-num
-                  dir="ltr"
-                >
-                  {demoCode}
-                </span>
-              </p>
-            </div>
+            <p className="flex flex-wrap items-baseline gap-2 text-md text-fg-muted">
+              {t('Demo only · SMS not sent')}
+              <span className="font-mono text-lg font-bold ltr:tracking-[0.2em] text-fg" data-num dir="ltr">
+                {demoCode}
+              </span>
+            </p>
             <Input
               size="lg"
               numeric
@@ -300,21 +279,9 @@ export default function ConfirmDelivery({
         )}
       </section>
 
-      {/* Dispute */}
+      {/* Dispute — reachable, not in the way */}
       <section className="border-t border-line pt-5">
-        <h2 className="text-lg font-bold text-fg">{t('Something not right?')}</h2>
-        <p className="mt-1 text-md ltr:leading-relaxed text-fg-muted">
-          {t(
-            'Raising an issue holds this delivery open. The cash for it cannot be reconciled and nothing is posted to MCL’s accounts until it is settled.',
-          )}
-        </p>
-        <Button
-          variant="secondary"
-          size="lg"
-          block
-          className="mt-4"
-          onClick={() => setDisputeOpen(true)}
-        >
+        <Button variant="secondary" size="lg" block onClick={() => setDisputeOpen(true)}>
           {t('Raise an issue')}
         </Button>
       </section>
@@ -345,9 +312,6 @@ export default function ConfirmDelivery({
         </div>
       </Modal>
 
-      <p className="text-md text-fg-muted">
-        {t('Delivered by {who} · order #{n}', { who: driver?.name ?? 'MCL', n: order.id })}
-      </p>
     </div>
   );
 }

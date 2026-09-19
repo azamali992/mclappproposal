@@ -161,27 +161,6 @@ export function isClosed(status: OrderStatus): boolean {
   return ['CONFIRMED', 'RECONCILED', 'MISMATCH_HELD', 'POST_FAILED', 'POSTED'].includes(status);
 }
 
-/** Timestamp shown against each completed step. */
-function stepTime(order: Order, key: string): string | undefined {
-  switch (key) {
-    case 'placed':
-      return order.createdAt;
-    case 'filled':
-      return order.filledAt;
-    case 'assigned':
-      return order.assignedAt;
-    case 'dispatched':
-    case 'enroute':
-      return order.dispatchedAt;
-    case 'delivered':
-      return order.deliveredAt;
-    case 'confirmed':
-      return order.confirmedAt;
-    default:
-      return undefined;
-  }
-}
-
 export type Tone = 'neutral' | 'info' | 'warn' | 'success' | 'danger';
 
 /** One-line headline for the top of any card showing this order. */
@@ -243,11 +222,14 @@ export function headline(order: Order, t: TFn = raw): { title: string; sub: stri
 // ── The vertical tracker ─────────────────────────────────────────────────────
 
 /**
- * Plain step list. No rail, no tinted nodes, no pulse: a done step gets a tick,
- * the step the order is at now gets a filled dot AND a bold label, and steps
- * still to come are plain grey text. "Here" is said by weight, not by motion.
+ * Plain step list. A done step gets a tick, the step the order is at now gets a
+ * filled dot AND a bold label, and steps still to come are plain grey text.
+ *
+ * The per-step timestamps are gone and so are the per-step hints for every step
+ * but the live one. Seven labels and seven clock times is a table; what the
+ * dealer came for is which line is bold.
  */
-export function ClientPipeline({ order, dense = false }: { order: Order; dense?: boolean }) {
+export function ClientPipeline({ order }: { order: Order }) {
   const t = useT();
   const current = stepIndexFor(order.status);
   const disputed = order.status === 'DISPUTED';
@@ -257,42 +239,29 @@ export function ClientPipeline({ order, dense = false }: { order: Order; dense?:
       {CLIENT_STEPS.map((step, i) => {
         const done = i < current;
         const live = i === current;
-        const at = stepTime(order, step.key);
         return (
-          <li key={step.key} className={['flex gap-3', dense ? 'py-2.5' : 'py-3'].join(' ')}>
+          <li key={step.key} className="flex gap-3 py-2.5">
             <span className="mt-1 flex h-5 w-5 shrink-0 items-center justify-center" aria-hidden>
               {done ? (
                 <Check className="h-5 w-5 text-fg-muted" />
               ) : live ? (
-                <span
-                  className={[
-                    'h-3 w-3 rounded-full',
-                    disputed ? 'bg-danger-fg' : 'bg-fg',
-                  ].join(' ')}
-                />
+                <span className={['h-3 w-3 rounded-full', disputed ? 'bg-danger-fg' : 'bg-fg'].join(' ')} />
               ) : (
                 <span className="h-1.5 w-1.5 rounded-full bg-line-strong" />
               )}
             </span>
             <div className="min-w-0">
-              <div className="flex flex-wrap items-baseline gap-x-2">
-                <span
-                  className={[
-                    'text-md ltr:leading-7',
-                    live ? 'font-bold text-fg' : done ? 'text-fg' : 'text-fg-muted',
-                  ].join(' ')}
-                >
-                  {t(step.label)}
-                </span>
-                {at && (done || live) && (
-                  <span className="text-base text-fg-muted" data-num>
-                    {fmtTime(at, t)}
-                  </span>
-                )}
-              </div>
-              {(live || !dense) && (
+              <span
+                className={[
+                  'text-md ltr:leading-7',
+                  live ? 'font-bold text-fg' : done ? 'text-fg' : 'text-fg-muted',
+                ].join(' ')}
+              >
+                {t(step.label)}
+              </span>
+              {live && (
                 <p className="text-base ltr:leading-relaxed text-fg-muted">
-                  {live && disputed ? t('We are reviewing the issue you raised.') : t(step.hint)}
+                  {disputed ? t('We are reviewing the issue you raised.') : t(step.hint)}
                 </p>
               )}
             </div>
@@ -323,8 +292,6 @@ export default function OrderTracking({
   const products = useStore((s) => s.products);
   const vehicle = useStore((s) => (order?.vehicleId ? select.vehicle(s, order.vehicleId) : undefined));
   const driver = useStore((s) => (order?.driverId ? select.user(s, order.driverId) : undefined));
-  const route = useStore((s) => (order?.routeId ? select.route(s, order.routeId) : undefined));
-  const location = useStore((s) => (order ? select.location(s, order.locationId) : undefined));
 
   // A client may only ever see their own order — enforced in the API, mirrored here.
   if (!order || order.clientId !== clientId) {
@@ -344,18 +311,16 @@ export default function OrderTracking({
 
   return (
     <div className="flex flex-col gap-7 px-4 pb-10 pt-4">
-      {/* Heading */}
+      {/* Where it is, in plain words. The order number is already in the
+          navigation bar above this screen, so it is not repeated here. */}
       <section>
-        <p className="text-md text-fg-muted" data-num>
-          {t('Order #{n}', { n: order.id })}
-        </p>
-        <h1 className="mt-1 text-2xl font-bold text-fg">
+        <h1 className="text-2xl font-bold text-fg">
           {order.status === 'DISPATCHED' ? t('Live') : h.title}
         </h1>
         <p className="mt-1 text-md ltr:leading-relaxed text-fg-muted">{h.sub}</p>
       </section>
 
-      {/* Vehicle — only real once dispatched */}
+      {/* The ECR, once it exists — and who is bringing it. */}
       {dispatched ? (
         <section className="rounded-lg border border-line p-4">
           <p className="flex flex-wrap items-center gap-2 text-md text-fg-muted">
@@ -372,27 +337,13 @@ export default function OrderTracking({
               <dt className="text-md text-fg-muted">{t('Driver')}</dt>
               <dd className="text-md font-bold text-fg">{driver?.name ?? '—'}</dd>
             </div>
-            <div className="flex items-baseline justify-between gap-3 py-3">
-              <dt className="text-md text-fg-muted">{t('Route')}</dt>
-              <dd className="text-end text-md text-fg">
-                {route ? `${route.name} (${route.code})` : '—'}
-              </dd>
-            </div>
           </dl>
-          <p className="mt-2 text-md text-fg-muted">
-            {t('Left {place} at {time}', {
-              place: location?.name ?? t('the plant'),
-              time: fmtTime(order.dispatchedAt, t),
-            })}
-          </p>
         </section>
       ) : (
         <section className="rounded-lg border border-line p-4">
           <p className="text-md font-bold text-fg">{t('No ECR yet')}</p>
           <p className="mt-1 text-md ltr:leading-relaxed text-fg-muted">
-            {t(
-              'Your ECR bill number is allocated at the gate the moment the vehicle is dispatched — never before. An order waiting at the plant does not burn a bill number.',
-            )}
+            {t('An ECR bill number is allocated only at dispatch, at the gate.')}
           </p>
         </section>
       )}
@@ -410,9 +361,6 @@ export default function OrderTracking({
         <h2 className="text-lg font-bold text-fg">
           {order.deliveredAt ? t('Delivered') : t('Requested')}
         </h2>
-        <p className="mt-1 text-md text-fg-muted">
-          {t('For {day}', { day: fmtRelDay(order.requestedDate, t) })}
-        </p>
         <ul className="mt-2 divide-y divide-line border-y border-line">
           {order.lines.map((l) => {
             const p = products.find((x) => x.id === l.productId);
@@ -428,9 +376,7 @@ export default function OrderTracking({
                     <N v={qty} /> <span className="font-normal text-fg-muted">{t('cyl')}</span>
                   </p>
                   {l.qtyDelivered != null && l.qtyDelivered !== l.qtyOrdered && (
-                    <p className="text-base text-warn-fg">
-                      {t('ordered {n}', { n: l.qtyOrdered })}
-                    </p>
+                    <p className="text-base text-warn-fg">{t('ordered {n}', { n: l.qtyOrdered })}</p>
                   )}
                 </div>
               </li>
@@ -441,12 +387,6 @@ export default function OrderTracking({
           <span className="text-md text-fg-muted">{t('Order value')}</span>
           <PKR v={value} className="text-lg font-bold text-fg" />
         </div>
-        {order.notes && (
-          <p className="text-md ltr:leading-relaxed text-fg-muted">
-            <span>{t('Your note')}: </span>
-            {order.notes}
-          </p>
-        )}
       </section>
 
       {/* Action */}

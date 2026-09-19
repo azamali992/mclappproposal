@@ -3,9 +3,11 @@
 // this industry — showing the customer their own held/returned position is the
 // value-add the paper book never gave them.
 //
-// Plain build: white ground, hairline rules, no shadows, no icon tiles and no
-// tinted meters. The credit and return figures are label/value lines with one
-// plain grey track each; they are flex rows, so they mirror without a transform.
+// Plain build: label and value lines, nothing else. The two progress meters are
+// gone — a bar that says "37% of delivered cylinders returned" is a second way
+// of reading two numbers that are already printed above it, and it needed a
+// role, three ARIA values and a label to say so. The explanatory paragraphs
+// under payment terms and under an empty cylinder balance have gone with them.
 
 import { useMemo } from 'react';
 import { useStore, select } from '../../core/store';
@@ -91,10 +93,6 @@ export default function Account({ clientId }: AccountProps) {
         }
       : null;
 
-  const returnRate = balance.delivered
-    ? Math.round((balance.returned / balance.delivered) * 100)
-    : 0;
-
   return (
     <div className="flex flex-col gap-7 px-4 pb-10 pt-4">
       {/* Identity */}
@@ -123,33 +121,6 @@ export default function Account({ clientId }: AccountProps) {
         {balance.inTransit > 0 && (
           <p className="mt-1 text-md text-fg">
             {t('{n} more on the way to you', { n: balance.inTransit })}
-          </p>
-        )}
-
-        {balance.delivered > 0 && (
-          <div className="mt-3">
-            {/* Plain grey track, one solid fill. No tint, no gradient. */}
-            <div
-              className="h-3 w-full overflow-hidden rounded-full bg-line"
-              role="meter"
-              aria-valuenow={returnRate}
-              aria-valuemin={0}
-              aria-valuemax={100}
-              aria-label={t('Empties returned against cylinders delivered')}
-            >
-              <div className="h-full bg-fg" style={{ width: `${Math.max(2, returnRate)}%` }} />
-            </div>
-            <p className="mt-2 text-md text-fg-muted">
-              {t('{n}% of delivered cylinders returned', { n: returnRate })}
-            </p>
-          </div>
-        )}
-
-        {balance.rows.length === 0 && (
-          <p className="mt-3 text-md ltr:leading-relaxed text-fg-muted">
-            {t(
-              'No cylinders are on your account yet. Every delivery and every empty the driver collects is posted here against your deposit — so the balance is always the same number MCL holds.',
-            )}
           </p>
         )}
 
@@ -211,28 +182,8 @@ export default function Account({ clientId }: AccountProps) {
                 </dd>
               </div>
             </dl>
-            {/* Plain grey track, one solid fill. */}
-            <div
-              className="mt-3 h-3 w-full overflow-hidden rounded-full bg-line"
-              role="meter"
-              aria-valuenow={credit.pct}
-              aria-valuemin={0}
-              aria-valuemax={100}
-              aria-label={t('Credit used')}
-            >
-              <div className="h-full bg-fg" style={{ width: `${Math.max(3, credit.pct)}%` }} />
-            </div>
-            <p className="mt-2 text-md text-fg-muted" data-num>
-              {t('{n}% used', { n: credit.pct })}
-            </p>
           </div>
-        ) : (
-          <p className="mt-2 text-md ltr:leading-relaxed text-fg-muted">
-            {t(
-              'The driver collects cash on delivery. The amount is reconciled at the gate the same day and only a matched reconciliation is posted to MCL’s accounts.',
-            )}
-          </p>
-        )}
+        ) : null}
       </section>
 
       {/* Delivery profile */}
@@ -256,13 +207,6 @@ export default function Account({ clientId }: AccountProps) {
           </Row>
         </dl>
       </section>
-
-      <p className="text-md ltr:leading-relaxed text-fg-muted">
-        {t(
-          'Signed in as {user}. You only ever see orders belonging to {client} — that rule is enforced by MCL’s server, not by this app.',
-          { user: me.name, client: client.name },
-        )}
-      </p>
     </div>
   );
 }

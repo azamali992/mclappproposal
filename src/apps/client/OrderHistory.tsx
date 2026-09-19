@@ -2,15 +2,19 @@
 // Every past delivery, with the receipt attached. The paper process could not
 // do this at all: the customer's copy was a carbon slip in a drawer.
 //
-// Plain build: white ground, hairline rules. The receipt is no longer dressed
-// as a paper slip — the perforated tear edge, the dashed rules and the card
-// shadow are gone. It is a plain list of labelled facts, which is what a dealer
-// actually reads off it.
+// A plain list. The four filter buttons and the running "delivered to date"
+// total are gone: a dealer with a dozen orders scrolls, and the spend figure is
+// a report, not a thing anyone came here to do. Each row is what was ordered,
+// where it got to, and what it cost.
+//
+// The receipt below is a plain list of labelled facts, not a paper slip — the
+// perforated tear edge, the dashed rules and the card shadow were removed
+// earlier; the MCL-processing tracker goes now, because the order's own
+// tracking screen already draws it.
 
-import { useMemo, useState } from 'react';
 import { useStore, select } from '../../core/store';
 import type { Order } from '../../core/types';
-import { EmptyState, PipelineTracker } from '../../ui/primitives';
+import { EmptyState } from '../../ui/primitives';
 import { ChevronRight } from '../../ui/icons';
 import { useT } from '../../i18n';
 import type { TFn } from '../../i18n';
@@ -19,8 +23,6 @@ import {
   N,
   Ecr,
   headline,
-  isLive,
-  isClosed,
   fmtDate,
   fmtDateTime,
   fmtRelDay,
@@ -36,15 +38,6 @@ const TONE_TEXT: Record<Tone, string> = {
   danger: 'font-bold text-danger-fg',
 };
 
-type Filter = 'all' | 'live' | 'done' | 'issues';
-
-const FILTERS: { key: Filter; label: string }[] = [
-  { key: 'all', label: 'All' },
-  { key: 'live', label: 'In progress' },
-  { key: 'done', label: 'Completed' },
-  { key: 'issues', label: 'Issues' },
-];
-
 export interface OrderHistoryProps {
   clientId: number;
   onOpen: (orderId: number) => void;
@@ -54,25 +47,6 @@ export default function OrderHistory({ clientId, onOpen }: OrderHistoryProps) {
   const t = useT();
   const orders = useStore((s) => select.ordersForClient(s, clientId));
   const products = useStore((s) => s.products);
-  const [filter, setFilter] = useState<Filter>('all');
-
-  const shown = useMemo(
-    () =>
-      orders.filter((o) => {
-        if (filter === 'live') return isLive(o.status) && o.status !== 'DISPUTED';
-        if (filter === 'done') return isClosed(o.status);
-        if (filter === 'issues') return o.status === 'DISPUTED' || o.status === 'CANCELLED';
-        return true;
-      }),
-    [orders, filter],
-  );
-
-  const totalSpend = orders
-    .filter((o) => isClosed(o.status))
-    .reduce(
-      (s, o) => s + o.lines.reduce((t2, l) => t2 + (l.qtyDelivered ?? l.qtyOrdered) * l.unitPrice, 0),
-      0,
-    );
 
   function summary(o: Order): string {
     if (o.lines.length === 1) {
@@ -90,79 +64,32 @@ export default function OrderHistory({ clientId, onOpen }: OrderHistoryProps) {
       <header>
         <h1 className="text-2xl font-bold text-fg">{t('Your orders')}</h1>
         <p className="mt-1 text-md text-fg-muted">{t('{n} orders', { n: orders.length })}</p>
-        <p className="mt-1 flex flex-wrap items-baseline gap-x-2 text-md text-fg-muted">
-          {t('Delivered to date')}
-          <PKR v={totalSpend} className="font-bold text-fg" />
-        </p>
       </header>
 
-      {/* Filters — plain buttons; the chosen one is bold with a dark border */}
-      <div className="-mx-4 flex gap-2 overflow-x-auto px-4 pb-1">
-        {FILTERS.map((f) => {
-          const on = filter === f.key;
-          return (
-            <button
-              key={f.key}
-              type="button"
-              aria-pressed={on}
-              onClick={() => setFilter(f.key)}
-              className={[
-                'min-h-[48px] shrink-0 rounded-md border px-4 text-md',
-                'focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent',
-                on
-                  ? 'border-fg font-bold text-fg'
-                  : 'border-line-strong font-normal text-fg-muted hover:text-fg hover:underline',
-              ].join(' ')}
-            >
-              {t(f.label)}
-            </button>
-          );
-        })}
-      </div>
-
-      {shown.length === 0 ? (
+      {orders.length === 0 ? (
         <EmptyState
           title={t('Nothing here yet')}
-          description={
-            filter === 'issues'
-              ? t('No disputed or cancelled orders — good news.')
-              : t('No orders match this filter.')
-          }
+          description={t('No orders match this filter.')}
         />
       ) : (
         <ul className="-mx-4 divide-y divide-line border-y border-line">
-          {shown.map((o) => (
+          {orders.map((o) => (
             <li key={o.id}>
               <button
                 type="button"
                 onClick={() => onOpen(o.id)}
-                className="flex min-h-[80px] w-full items-center gap-3 px-4 py-3 text-start hover:bg-surface-high focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-accent"
+                className="flex min-h-[72px] w-full items-center gap-3 px-4 py-3 text-start hover:bg-surface-high focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-accent"
               >
                 <span className="min-w-0 flex-1">
                   <span className="block truncate text-md font-bold text-fg">{summary(o)}</span>
-                  <span className="mt-0.5 block text-base text-fg-muted">
-                    {fmtDate(o.createdAt, t)} ·{' '}
-                    {o.ecr ? (
-                      <span data-num dir="ltr">
-                        {t('ECR')} {o.ecr}
-                      </span>
-                    ) : (
-                      t('No ECR yet')
-                    )}
-                  </span>
                   <span className={['mt-0.5 block text-base', TONE_TEXT[headline(o, t).tone]].join(' ')}>
                     {headline(o, t).title}
                   </span>
                 </span>
-                <span className="shrink-0 text-end">
-                  <PKR
-                    v={o.lines.reduce((s, l) => s + (l.qtyDelivered ?? l.qtyOrdered) * l.unitPrice, 0)}
-                    className="block text-md font-bold text-fg"
-                  />
-                  {o.oracleDocNo && (
-                    <span className="text-base text-success-fg">{t('invoiced')}</span>
-                  )}
-                </span>
+                <PKR
+                  v={o.lines.reduce((s, l) => s + (l.qtyDelivered ?? l.qtyOrdered) * l.unitPrice, 0)}
+                  className="shrink-0 text-md font-bold text-fg"
+                />
                 <ChevronRight className="h-5 w-5 shrink-0 text-fg-muted rtl:-scale-x-100" />
               </button>
             </li>
@@ -345,14 +272,6 @@ export function OrderReceipt({ orderId, clientId }: { orderId: number; clientId:
             </div>
           )}
         </dl>
-
-        {/* MCL's own processing stages, in MCL's vocabulary */}
-        <div>
-          <h2 className="text-lg font-bold text-fg">{t('MCL processing')}</h2>
-          <div className="mt-2">
-            <PipelineTracker current={order.status} compact />
-          </div>
-        </div>
 
         {/* Confirmation + Oracle */}
         <footer className="border-t border-line pt-4">

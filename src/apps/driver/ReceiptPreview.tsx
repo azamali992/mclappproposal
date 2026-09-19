@@ -37,9 +37,9 @@
 import { useEffect, useRef, useState } from 'react';
 import type { Order } from '../../core/types';
 import { select } from '../../core/store';
-import { Printer, Check, Alert, WifiOff } from '../../ui/icons';
+import { Printer, Check, WifiOff } from '../../ui/icons';
 import { useI18n, useT } from '../../i18n';
-import { Btn, Chip, clock, shortRef, syncStateOf, useAll, useNotify, type Session } from './index';
+import { Btn, clock, shortRef, syncStateOf, useAll, useNotify, type Session } from './index';
 
 /** Printer output is ASCII in fixed columns — formatted here, not with <Money>. */
 const rs = (n: number) => n.toLocaleString('en-PK', { maximumFractionDigits: 0 });
@@ -285,82 +285,43 @@ export default function ReceiptPreview({ order, session }: { order: Order; sessi
       </div>
 
       {/* ── Printer controls ─────────────────────────────────────────────── */}
+      {/* The paper above is untouched. What surrounded it was not: a printer
+          card with a paragraph, an "Integration point" box with three bullets,
+          and two more advisory notes. The driver's job here is to press Print
+          and hand over paper. The integration and hardware notes are project
+          documentation, not a screen. */}
       <div className="min-w-0 flex-1 space-y-3">
-        <div className="rounded-xl border border-line bg-surface p-4">
-          <div className="flex items-start gap-3">
-            <Printer className={'mt-0.5 h-6 w-6 shrink-0 ' + (state === 'printing' ? 'animate-pulse text-accent' : 'text-fg-dim')} />
-            <div className="min-w-0 flex-1">
-              <h2 className="text-md font-semibold text-fg">{t('Thermal printer')}</h2>
-              <p className="mt-1 text-sm text-fg-muted">
-                {t('Paired over Bluetooth to the tab. Printing is a local peripheral call — it has nothing to do with the network, so a client still walks away with paper in a dead zone.')}
-              </p>
-            </div>
-            {state === 'printed' && <Chip tone="success">{t('{n} printed', { n: copies })}</Chip>}
-          </div>
-
-          <Btn
-            variant="primary"
-            size="lg"
-            disabled={state === 'printing'}
-            onClick={print}
-            className="mt-4 min-h-[64px] w-full text-md"
-          >
+        <Btn
+          variant="primary"
+          size="lg"
+          disabled={state === 'printing'}
+          onClick={print}
+          className="min-h-[64px] w-full text-md"
+        >
+          <span className="flex items-center justify-center gap-2">
+            <Printer className="h-6 w-6 shrink-0" />
             {state === 'printing'
               ? t('Printing…')
               : state === 'printed'
                 ? t('Print another copy')
                 : t('Print receipt')}
-          </Btn>
+          </span>
+        </Btn>
 
-          {state === 'printing' && (
-            <p className="mt-3 text-center text-fg-muted">{t('Printing…')}</p>
-          )}
-
-          {state === 'printed' && (
-            <p className="mt-3 flex items-start gap-2 rounded-lg border-2 border-success bg-success-soft p-3 text-sm text-success-fg">
-              <Check className="mt-0.5 h-4 w-4 shrink-0" />
-              {t('Receipt {ref} printed. The client copy is signed paper; the server copy is the confirmation_event. Neither can be quietly edited afterwards.', {
-                ref: confirmation?.receiptRef ?? '—',
-              })}
-            </p>
-          )}
-        </div>
-
-        <div className="rounded-xl border-2 border-dashed border-info-line bg-info-soft p-4">
-          <div className="font-semibold text-info-fg">
-            {t('Integration point')}
-          </div>
-          <p className="mt-1.5 text-sm text-fg-muted">
-            {t('In the shipped build this button hands the payload above to an ESC/POS driver over Bluetooth RFCOMM (58mm, 32 columns). The layout you are looking at is that byte stream rendered to screen, so what prints in Multan is what you approve here.')}
+        {state === 'printed' && (
+          <p className="flex items-center justify-center gap-2 text-md font-semibold text-success-fg">
+            <Check className="h-5 w-5 shrink-0" />
+            {t('{n} printed', { n: copies })}
           </p>
-          <ul className="mt-2 space-y-1 text-fg-muted">
-            <li>· {t('Printer model and SDK still to be chosen — the one hardware decision left open.')}</li>
-            <li>· {t('Reprints are logged; the receipt_ref never changes.')}</li>
-            {/* Surfaced in the UI, not just in a comment: this is a real
-                unresolved decision and the demo should not hide it. */}
-            <li>
-              ·{' '}
-              {t('Urdu on paper is unconfirmed. Nastaliq is not in a standard ESC/POS code page, so printing it needs either a printer with an Urdu font ROM or the receipt rasterised to a bitmap. The Urdu on this preview is screen-only until that is tested on real hardware.')}
-            </li>
-          </ul>
-        </div>
-
-        {sync !== 'synced' && (
-          <div className="flex items-start gap-2.5 rounded-xl border-2 border-warn bg-warn-soft p-3.5">
-            <WifiOff className="mt-0.5 h-4 w-4 shrink-0 text-warn-fg" />
-            <p className="text-sm text-warn-fg">
-              {t('This receipt was produced with the delivery still queued on the tab. The client has their paper; the server catches up on its own.')}
-            </p>
-          </div>
         )}
 
-        {!confirmation && (
-          <div className="flex items-start gap-2.5 rounded-xl border border-line bg-surface-sunken p-3.5">
-            <Alert className="mt-0.5 h-4 w-4 shrink-0 text-fg-dim" />
-            <p className="text-sm text-fg-muted">
-              {t('No confirmation event yet — the signature block prints blank for a wet signature on paper.')}
-            </p>
-          </div>
+        {/* Meaning-bearing state: the client has paper the server has not seen
+            yet. That is a fact the driver is accountable for, so it stays. */}
+        {sync !== 'synced' && (
+          <p className="flex items-center gap-2 text-md font-semibold text-warn-fg">
+            <WifiOff className="h-5 w-5 shrink-0" />
+            {t('Saved on this tab — queued for sync')}
+          </p>
         )}
       </div>
     </div>

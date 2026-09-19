@@ -83,9 +83,7 @@ export default function ClientApp() {
                 clientId={clientId}
                 onTrack={goTrack}
                 onConfirm={goConfirm}
-                onReceipt={goReceipt}
                 onPlaceOrder={goPlaceOrder}
-                onSeeAll={() => setTab('history')}
               />
             )}
             {tab === 'order' && (

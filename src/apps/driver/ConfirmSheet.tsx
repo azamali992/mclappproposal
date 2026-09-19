@@ -8,15 +8,22 @@
 // override: the person standing at the gate is not always the person whose
 // phone the code went to.
 //
+// Two choices at the top and then only the chosen one. The client identity
+// card, the "client default" chip, the optional note field and the paragraph in
+// the footer are gone — the customer is holding the tablet and needs to sign or
+// read out a code, not read. Dispute is still here, one tap down, because a
+// customer refusing a delivery is a real outcome; it is just not one of the two
+// things this screen is normally for.
+//
 // The rejection path is deliberately reachable. A wrong OTP throws a RuleError
 // and we show it — that is the proof the rule lives in the backend, not here.
 
 import { useState } from 'react';
 import type { Order } from '../../core/types';
 import { api, select } from '../../core/store';
-import { Signature, Lock, Alert, Check, X, Bell } from '../../ui/icons';
+import { Signature, Lock, Alert, Check, X } from '../../ui/icons';
 import { useT } from '../../i18n';
-import { Btn, Chip, Sheet, Sig, TextArea, useAll, useGuard, useNotify } from './index';
+import { Btn, Sheet, Sig, TextArea, useAll, useGuard, useNotify } from './index';
 
 type Mode = 'signature' | 'otp' | 'dispute';
 
@@ -40,7 +47,6 @@ export default function ConfirmSheet({ open, order, onClose, onSettled }: Props)
   const [signature, setSignature] = useState<string | null>(null);
   const [padKey, setPadKey] = useState(0);
   const [issuedCode, setIssuedCode] = useState<string | null>(null);
-  const [showCode, setShowCode] = useState(true);
   const [entry, setEntry] = useState('');
   const [notes, setNotes] = useState('');
   const [disputeArmed, setDisputeArmed] = useState(false);
@@ -63,7 +69,6 @@ export default function ConfirmSheet({ open, order, onClose, onSettled }: Props)
     const code = guard(() => api.requestOtp(order.id));
     if (!code) return;
     setIssuedCode(code);
-    setShowCode(true);
     setEntry('');
     notify(
       'info',
@@ -124,86 +129,68 @@ export default function ConfirmSheet({ open, order, onClose, onSettled }: Props)
       size="lg"
       title={mode === 'dispute' ? t('Client disputes this delivery') : t('Client confirmation')}
       footer={
-        <div className="flex w-full items-center justify-between gap-3">
-          <p className="max-w-[420px] text-base leading-snug text-fg-dim">
-            {mode === 'dispute'
-              ? t('A dispute is an event on top of the delivery, not a deletion. Both stay in the record.')
-              : t('Confirmation moves ECR {ecr} to CONFIRMED and unlocks the gate cashier. It does not post to Oracle — only matched cash does that.', { ecr: order.ecr ?? '' })}
-          </p>
-          <div className="flex shrink-0 gap-2">
-            <Btn variant="ghost" size="lg" onClick={close}>
-              {t('Not now')}
+        <div className="flex w-full justify-end gap-2">
+          <Btn variant="ghost" size="lg" onClick={close}>
+            {t('Not now')}
+          </Btn>
+          {mode === 'signature' && (
+            <Btn variant="primary" size="lg" disabled={!signature} onClick={confirmSignature}>
+              {t('Confirm delivery')}
             </Btn>
-            {mode === 'signature' && (
-              <Btn variant="primary" size="lg" disabled={!signature} onClick={confirmSignature}>
-                {t('Confirm delivery')}
-              </Btn>
-            )}
-            {mode === 'otp' && (
-              <Btn variant="primary" size="lg" disabled={entry.length !== 6} onClick={confirmOtp}>
-                {t('Verify code')}
-              </Btn>
-            )}
-            {mode === 'dispute' && (
-              <Btn variant="danger" size="lg" disabled={!disputeArmed || notes.trim().length < 4} onClick={dispute}>
-                {t('Record dispute')}
-              </Btn>
-            )}
-          </div>
+          )}
+          {mode === 'otp' && (
+            <Btn variant="primary" size="lg" disabled={entry.length !== 6} onClick={confirmOtp}>
+              {t('Verify code')}
+            </Btn>
+          )}
+          {mode === 'dispute' && (
+            <Btn variant="danger" size="lg" disabled={!disputeArmed || notes.trim().length < 4} onClick={dispute}>
+              {t('Record dispute')}
+            </Btn>
+          )}
         </div>
       }
     >
       <div className="space-y-4">
-        {/* ── Who is confirming ─────────────────────────────────────────── */}
-        <div className="flex flex-wrap items-center justify-between gap-3 rounded-md border border-line bg-surface px-4 py-3">
-          <div>
-            <div className="text-lg font-semibold text-fg">{client?.name}</div>
-            <div className="text-md text-fg-muted">
-              {client?.address} ·{' '}
-              {/* Phone number: Latin digits, forced LTR. */}
-              <span className="font-mono" dir="ltr">{client?.contactNumber}</span>
-            </div>
+        {/* ── The two ways to confirm ───────────────────────────────────── */}
+        {mode !== 'dispute' && (
+          <div className="grid grid-cols-2 gap-2">
+            <MethodTab
+              active={mode === 'signature'}
+              onClick={() => setMode('signature')}
+              icon={<Signature className="h-5 w-5" />}
+              label={t('Signature')}
+            />
+            <MethodTab
+              active={mode === 'otp'}
+              onClick={() => setMode('otp')}
+              icon={<Lock className="h-5 w-5" />}
+              label={t('OTP')}
+            />
           </div>
-          <Chip tone="neutral">
-            {t('Client default: {method}', {
-              method: client?.confirmMethod === 'otp' ? t('OTP') : t('Signature'),
-            })}
-          </Chip>
-        </div>
-
-        {/* ── Method switch ─────────────────────────────────────────────── */}
-        <div className="grid grid-cols-3 gap-2">
-          <MethodTab
-            active={mode === 'signature'}
-            onClick={() => setMode('signature')}
-            icon={<Signature className="h-5 w-5" />}
-            label={t('Signature')}
-            sub={t('Sign on the glass')}
-          />
-          <MethodTab
-            active={mode === 'otp'}
-            onClick={() => setMode('otp')}
-            icon={<Lock className="h-5 w-5" />}
-            label={t('OTP')}
-            sub={t('Code to their phone')}
-          />
-          <MethodTab
-            active={mode === 'dispute'}
-            onClick={() => setMode('dispute')}
-            icon={<Alert className="h-5 w-5" />}
-            label={t('Dispute')}
-            sub={t('Something is wrong')}
-            danger
-          />
-        </div>
+        )}
 
         {/* ── Signature ─────────────────────────────────────────────────── */}
         {mode === 'signature' && (
-          <div className="rounded-md border border-line bg-surface p-4">
-            <div className="mb-2.5 flex items-center justify-between gap-3">
-              <p className="text-md text-fg-muted">
-                {t('Ask the client to sign below to confirm the cylinders and the cash.')}
-              </p>
+          <div>
+            {/* The pad keeps a 2px boundary: it is a writing surface the client
+                has to find on a white screen, not a decorative frame. */}
+            <div className="overflow-hidden rounded-md border-2 border-line-strong bg-surface">
+              <Sig
+                key={padKey}
+                label={t('Received by {name}', { name: client?.name ?? t('Customer') })}
+                onChange={(d) => setSignature(d)}
+                height={190}
+              />
+            </div>
+            <div className="mt-2.5 flex flex-wrap items-center justify-between gap-2">
+              {signature ? (
+                <span className="flex items-center gap-1.5 text-md font-semibold text-success-fg">
+                  <Check className="h-5 w-5" /> {t('Signature captured')}
+                </span>
+              ) : (
+                <span className="text-md text-fg-dim">{t('Waiting for a signature…')}</span>
+              )}
               <Btn
                 variant="secondary"
                 size="md"
@@ -216,88 +203,33 @@ export default function ConfirmSheet({ open, order, onClose, onSettled }: Props)
                 {t('Clear')}
               </Btn>
             </div>
-            {/* The pad keeps a 2px boundary: it is a writing surface the client
-                has to find on a white screen, not a decorative frame. */}
-            <div className="overflow-hidden rounded-md border-2 border-line-strong bg-surface">
-              <Sig
-                key={padKey}
-                label={t('Received by {name}', { name: client?.name ?? t('Customer') })}
-                onChange={(d) => setSignature(d)}
-                height={190}
-              />
-            </div>
-            <div className="mt-2.5 flex flex-wrap items-center justify-between gap-2">
-              <span className="text-base text-fg-dim">
-                {t('Signed at the gate · {date}', { date: new Date().toLocaleDateString('en-GB') })}
-              </span>
-              {signature ? (
-                <span className="flex items-center gap-1.5 text-md font-semibold text-success-fg">
-                  <Check className="h-5 w-5" /> {t('Signature captured')}
-                </span>
-              ) : (
-                <span className="text-md text-fg-dim">{t('Waiting for a signature…')}</span>
-              )}
-            </div>
           </div>
         )}
 
         {/* ── OTP ───────────────────────────────────────────────────────── */}
         {mode === 'otp' && (
-          <div className="rounded-md border border-line bg-surface p-4">
+          <div>
             {!issuedCode ? (
-              <div className="py-3 text-center">
-                <Lock className="mx-auto h-9 w-9 text-fg-dim" />
-                <p className="mx-auto mt-2.5 max-w-[440px] text-md text-fg-muted">
-                  {t('A single-use 6-digit code goes to the number on the client’s account. They read it out; you type it in. No paper, no forged signature.')}
-                </p>
-                <Btn variant="primary" size="lg" className="mt-4 min-h-[56px] px-6" onClick={sendOtp}>
-                  {t('Send code to {phone}', { phone: client?.contactNumber ?? '' })}
-                </Btn>
-              </div>
+              <Btn variant="primary" size="lg" className="min-h-[56px] w-full px-6" onClick={sendOtp}>
+                {t('Send code to {phone}', { phone: client?.contactNumber ?? '' })}
+              </Btn>
             ) : (
-              <div className="grid gap-4 sm:grid-cols-2">
-                {/* Demo affordance — in production this pane does not exist. */}
-                <div className="rounded-md border border-line bg-surface p-4">
-                  <div className="flex items-center justify-between gap-2">
-                    <span className="flex items-center gap-2 text-base font-semibold text-info-fg">
-                      <Bell className="h-4 w-4" /> {t('Demo only — the SMS would say')}
-                    </span>
-                    <button
-                      type="button"
-                      onClick={() => setShowCode((v) => !v)}
-                      className="min-h-[44px] px-2 text-base text-fg-muted underline"
-                    >
-                      {showCode ? t('Hide') : t('Show')}
-                    </button>
-                  </div>
-                  <div className="mt-2 rounded-md border border-line p-3">
-                    <p className="text-md leading-relaxed text-fg-muted">
-                      {/* The SMS body is what the handset actually receives. It is
-                          sent in English by the gateway today, so it is shown as
-                          sent rather than translated — the ECR and the code are
-                          identifiers in any case. */}
-                      <span dir="ltr" className="inline-block">
-                        MCL: your delivery code for ECR {order.ecr} is{' '}
-                        <span className="font-mono text-xl font-bold tracking-[0.25em] text-fg">
-                          {showCode ? issuedCode : '••••••'}
-                        </span>
-                        . Do not share.
-                      </span>
-                    </p>
-                  </div>
-                  <p className="mt-2.5 text-base leading-snug text-fg-dim">
-                    {t('In the field this pane does not exist — the code only ever reaches the client’s handset. Type a wrong code to watch the backend reject it.')}
-                  </p>
-                  <Btn variant="secondary" size="md" className="mt-2 min-h-[44px]" onClick={sendOtp}>
-                    {t('Resend a new code')}
-                  </Btn>
-                </div>
+              <div className="space-y-3">
+                {/* Demo affordance — in production this line does not exist. */}
+                <p className="flex flex-wrap items-baseline gap-2 text-base text-fg-muted">
+                  {t('Demo only — the SMS would say')}
+                  <span
+                    className="font-mono text-xl font-bold tracking-[0.25em] text-fg"
+                    dir="ltr"
+                  >
+                    {issuedCode}
+                  </span>
+                </p>
 
                 <div>
-                  <div className="text-md font-semibold text-fg">{t('Enter the code')}</div>
-                  {/* The six boxes fill left-to-right in both languages: the code
-                      is a Latin numeral string read out over a phone. */}
-                  <div className="mt-2 flex gap-2" dir="ltr">
+                  {/* The six boxes fill left-to-right in both languages: the
+                      code is a Latin numeral string read out over a phone. */}
+                  <div className="flex gap-2" dir="ltr">
                     {Array.from({ length: 6 }).map((_, i) => (
                       <div
                         key={i}
@@ -315,26 +247,31 @@ export default function ConfirmSheet({ open, order, onClose, onSettled }: Props)
                     onBack={() => setEntry((e) => e.slice(0, -1))}
                     onClear={() => setEntry('')}
                   />
+                  <Btn variant="secondary" size="md" className="mt-2 min-h-[44px]" onClick={sendOtp}>
+                    {t('Resend a new code')}
+                  </Btn>
                 </div>
               </div>
             )}
           </div>
         )}
 
-        {/* ── Dispute ───────────────────────────────────────────────────── */}
-        {mode === 'dispute' && (
+        {/* ── Dispute — one tap down, never in the way ───────────────────── */}
+        {mode !== 'dispute' ? (
+          <Btn variant="ghost" size="lg" className="min-h-[48px]" onClick={() => setMode('dispute')}>
+            <span className="flex items-center gap-2 text-danger-fg">
+              <Alert className="h-5 w-5" /> {t('Something is wrong')}
+            </span>
+          </Btn>
+        ) : (
           <div className="rounded-md border border-danger bg-danger-soft p-4">
-            <p className="text-md text-fg-muted">
-              {t('Record what the client is disputing in their words. This is the entry the office reads tomorrow morning, so be specific — quantity, condition, or price.')}
-            </p>
-            <div className="mt-3">
-              <TextArea
-                value={notes}
-                onChange={(e) => setNotes(e.target.value)}
-                rows={3}
-                placeholder={t('e.g. Client counted 4 cylinders, not 6. Refused to sign until the office calls.')}
-              />
-            </div>
+            <TextArea
+              value={notes}
+              onChange={(e) => setNotes(e.target.value)}
+              rows={3}
+              placeholder={t('e.g. Client counted 4 cylinders, not 6. Refused to sign until the office calls.')}
+              aria-label={t('Notes')}
+            />
             <label className="mt-3 flex cursor-pointer items-start gap-3 rounded-md border border-line bg-surface p-4">
               <input
                 type="checkbox"
@@ -346,21 +283,6 @@ export default function ConfirmSheet({ open, order, onClose, onSettled }: Props)
                 {t('I understand this flags ECR {ecr} as DISPUTED, blocks it from cash reconciliation, and stops it reaching Oracle until the office resolves it. The delivery record itself is kept, not deleted.', { ecr: order.ecr ?? '—' })}
               </span>
             </label>
-          </div>
-        )}
-
-        {/* ── Optional note on the confirmation ─────────────────────────── */}
-        {mode !== 'dispute' && (
-          <div>
-            <div className="mb-2 text-md text-fg-muted">
-              {t('Note on the confirmation (optional)')}
-            </div>
-            <TextArea
-              value={notes}
-              onChange={(e) => setNotes(e.target.value)}
-              rows={2}
-              placeholder={t('e.g. 2 cylinders short — customer accepted, will collect next run.')}
-            />
           </div>
         )}
       </div>
@@ -375,34 +297,24 @@ function MethodTab({
   onClick,
   icon,
   label,
-  sub,
-  danger,
 }: {
   active: boolean;
   onClick: () => void;
   icon: React.ReactNode;
   label: string;
-  sub: string;
-  danger?: boolean;
 }) {
   return (
     <button
       type="button"
       onClick={onClick}
+      aria-pressed={active}
       className={
-        'flex min-h-[68px] items-center gap-3 rounded-md border bg-surface px-4 py-3 text-start ' +
-        (active
-          ? danger
-            ? 'border-danger text-danger-fg'
-            : 'border-fg text-fg'
-          : 'border-line text-fg-muted')
+        'flex min-h-[60px] items-center gap-3 rounded-md border bg-surface px-4 py-3 text-start ' +
+        (active ? 'border-fg text-fg' : 'border-line text-fg-muted')
       }
     >
       <span className="shrink-0">{icon}</span>
-      <span className="min-w-0 leading-tight">
-        <span className={'block text-md ' + (active ? 'font-semibold' : 'font-normal')}>{label}</span>
-        <span className="block truncate text-base">{sub}</span>
-      </span>
+      <span className={'truncate text-md ' + (active ? 'font-semibold' : 'font-normal')}>{label}</span>
     </button>
   );
 }
@@ -442,7 +354,7 @@ function Keypad({
       <button type="button" className={cls} onClick={() => onDigit('0')}>
         0
       </button>
-      <button type="button" className={cls + ' text-fg-dim'} onClick={onBack} aria-label={t('Backspace')}>
+      <button type="button" className={cls} onClick={onBack} aria-label={t('Backspace')}>
         ⌫
       </button>
     </div>
