@@ -263,6 +263,26 @@ export function orderCylinders(order: Order, field: keyof OrderLine = 'qtyOrdere
   return order.lines.reduce((s, l) => s + (Number(l[field]) || 0), 0);
 }
 
+/**
+ * Cash the counter should take for a collection that has not happened yet.
+ *
+ * `expectedCash` reads `qtyDelivered`, which is zero until the handover is
+ * recorded — so it cannot quote a collection in advance. This quotes from what
+ * is about to be handed over, plus any service work already on the bill.
+ */
+export function quoteCash(
+  order: Order,
+  handingOver?: { lineId: number; qtyDelivered: number }[],
+): number {
+  const client = state.clients.find((c) => c.id === order.clientId);
+  if (client?.paymentTerms === 'credit') return 0;
+  const goods = order.lines.reduce((sum, l) => {
+    const qty = handingOver?.find((x) => x.lineId === l.id)?.qtyDelivered ?? l.qtyLoaded ?? l.qtyOrdered;
+    return sum + qty * l.unitPrice;
+  }, 0);
+  return goods + serviceChargeTotal(order);
+}
+
 /** Cash a cash-terms order is expected to yield once delivered. */
 export function expectedCash(order: Order): number {
   const client = state.clients.find((c) => c.id === order.clientId);
@@ -286,6 +306,15 @@ export const select = {
   location: (s: State, id: number) => s.locations.find((l) => l.id === id),
   bookType: (s: State, id: number) => s.bookTypes.find((b) => b.id === id),
   serviceCharge: (s: State, id: number) => s.serviceCharges.find((c) => c.id === id),
+  /** Released, ECR issued, waiting for the client's van to turn up. */
+  awaitingCollection: (s: State, locationId?: number) =>
+    s.orders.filter(
+      (o) =>
+        o.fulfilment === 'collection' &&
+        o.status === 'DISPATCHED' &&
+        (locationId == null || o.locationId === locationId),
+    ),
+
   /** Orders waiting for the client to come and collect them. */
   collectionQueue: (s: State, locationId?: number) =>
     s.orders.filter(
@@ -561,6 +590,9 @@ export const api = {
   assignOrder(orderId: number, input: { vehicleId: number; routeId: number; driverId: number; lines?: { lineId: number; qtyLoaded: number }[] }) {
     requireRole('clerk');
     const o = findOrder(orderId);
+    if (o.fulfilment === 'collection') {
+      throw new RuleError('FULFILMENT', 'This order is collected by the client — release it at the counter instead of assigning a vehicle.');
+    }
 
     if (input.lines) {
       for (const upd of input.lines) {
@@ -815,6 +847,9 @@ export const api = {
   }): string {
     const u = requireRole('driver');
     const o = findOrder(input.orderId);
+    if (o.fulfilment === 'collection') {
+      throw new RuleError('FULFILMENT', 'This order is collected by the client at the plant — it is not on any manifest.');
+    }
     if (o.driverId !== u.id) throw new RuleError('RBAC', 'This order is not on your manifest.');
 
     const clientRef = uuid();

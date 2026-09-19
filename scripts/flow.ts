@@ -2,7 +2,7 @@
 // the exact path the demo takes on stage, in order, with the role switch at each
 // step. If this passes, the whole story can be told without a dead end.
 // Run: npm run flow
-import { api, getState, select, expectedCash, orderCylinders, RuleError } from '../src/core/store.ts';
+import { api, getState, select, expectedCash, orderCylinders, quoteCash, serviceChargeTotal, RuleError } from '../src/core/store.ts';
 
 const U = { dealer: 1, sales: 2, clerk: 3, driver: 4, gate: 5, cashier: 6, admin: 7 };
 
@@ -162,6 +162,49 @@ for (const a of [...trail].reverse()) {
   console.log(`   ${new Date(a.at).toLocaleTimeString('en-GB')}  ${a.actorRole.padEnd(8)} ${a.action}`);
 }
 console.log(`\n   ${orderCylinders(s().orders.find(o=>o.id===order.id)!, 'qtyDelivered')} cylinders delivered · ${money(cash)} cash · Oracle ${done.oracleDocNo}`);
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Self-collection: the client's own van. No vehicle, no route, the ex-delivery
+// rate card, plus cylinder management work billed on the same document.
+beat('Clerk', 'a self-collection, priced off the ex-delivery rate card');
+api.switchUser(U.clerk);
+{
+  const coll = s().orders.find((o) => o.fulfilment === 'collection' && o.status === 'FILLED');
+  if (!coll) {
+    ok('a collection order is seeded', false);
+  } else {
+    const p0 = select.product(s(), coll.lines[0].productId)!;
+    ok('priced off the collection rate', coll.lines[0].unitPrice === p0.collectionPrice,
+      `${money(p0.collectionPrice)} vs ${money(p0.unitPrice)} delivered`);
+
+    try {
+      api.assignOrder(coll.id, { vehicleId: 1, routeId: 1, driverId: U.driver });
+      ok('a collection cannot be given a vehicle', false, 'the API accepted it');
+    } catch (e) {
+      ok('a collection cannot be given a vehicle', e instanceof RuleError, (e as Error).message);
+    }
+
+    const before = serviceChargeTotal(coll);
+    api.addServiceCharge(coll.id, 2, 1, 'Returned with flaking paint');
+    const after = serviceChargeTotal(s().orders.find((o) => o.id === coll.id)!);
+    ok('a service charge lands on the bill', after - before === 1950, `+${money(after - before)} repaint`);
+
+    const cEcr = api.releaseForCollection(coll.id);
+    ok('a collection still burns an ECR at release', /^[0-9]{10}$/.test(cEcr), cEcr);
+
+    const quoted = quoteCash(s().orders.find((o) => o.id === coll.id)!);
+    api.recordCollection({ orderId: coll.id, collectedBy: 'Shahid — pickup LES-2291', cashCollected: quoted });
+    const handed = s().orders.find((o) => o.id === coll.id)!;
+    ok('handover recorded at the counter', handed.status === 'DELIVERED', handed.collectedBy);
+    ok('bill covers goods and service work', quoted > 0, money(quoted));
+
+    const payload = api.buildOraclePayload(coll.id) as Record<string, unknown>;
+    ok('Oracle payload names the rate card', payload.rate_card === 'EX_DELIVERY');
+    const charges = payload.service_charges as unknown[];
+    ok('Oracle payload carries the service work', Array.isArray(charges) && charges.length > 0,
+      `${charges.length} charge line(s)`);
+  }
+}
 
 console.log(`\n${failures === 0 ? 'FULL FLOW WORKS END TO END' : failures + ' STEP(S) FAILED'}\n`);
 process.exit(failures === 0 ? 0 : 1);

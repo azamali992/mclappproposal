@@ -172,9 +172,18 @@ type SeedOrder = Omit<Order, 'fulfilment' | 'serviceCharges'> &
   Partial<Pick<Order, 'fulfilment' | 'serviceCharges'>>;
 
 let lineId = 0;
-function L(orderId: number, productId: number, qtyOrdered: number, extra: Partial<OrderLine> = {}): OrderLine {
+function L(
+  orderId: number,
+  productId: number,
+  qtyOrdered: number,
+  extra: Partial<OrderLine> = {},
+  fulfilment: 'delivery' | 'collection' = 'delivery',
+): OrderLine {
   const p = products.find((x) => x.id === productId)!;
-  return { id: ++lineId, orderId, productId, qtyOrdered, unitPrice: p.unitPrice, ...extra };
+  // The rate card follows the fulfilment mode. A collection billed at the
+  // delivered rate would charge the client for transport they provided.
+  const unitPrice = fulfilment === 'collection' ? p.collectionPrice : p.unitPrice;
+  return { id: ++lineId, orderId, productId, qtyOrdered, unitPrice, ...extra };
 }
 
 const seedOrders: SeedOrder[] = [
@@ -208,7 +217,7 @@ const seedOrders: SeedOrder[] = [
   // - A self-collection sitting in the clerk's queue. No vehicle, no route: the
   //   client's own van is at the gate. Priced off the ex-delivery rate card,
   //   with plant handling and two nozzle changes billed as service work. -
-  { id: 112, ecr: null, status: 'FILLED', origin: 'sales', fulfilment: 'collection', clientId: 4, locationId: 1, bookTypeId: 1, requestedDate: iso(0), createdBy: 2, createdAt: iso(0, 8, 50), filledAt: iso(0, 9, 10), notes: 'Client sending their own pickup at midday', lines: [L(112, 1, 5, { qtyLoaded: 5 })], serviceCharges: [
+  { id: 112, ecr: null, status: 'FILLED', origin: 'sales', fulfilment: 'collection', clientId: 4, locationId: 1, bookTypeId: 1, requestedDate: iso(0), createdBy: 2, createdAt: iso(0, 8, 50), filledAt: iso(0, 9, 10), notes: 'Client sending their own pickup at midday', lines: [L(112, 1, 5, { qtyLoaded: 5 }, 'collection')], serviceCharges: [
     { id: 1, orderId: 112, chargeId: 1, qty: 2, unitAmount: 2800, note: 'Both valves leaking on return' },
     { id: 2, orderId: 112, chargeId: 9, qty: 1, unitAmount: 500 },
   ] },
