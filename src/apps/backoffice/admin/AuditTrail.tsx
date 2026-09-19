@@ -2,39 +2,24 @@
 // "Who did what, and when" — the question a CEO asks about a paper ECR book and
 // cannot get an answer to.
 //
+// One job: read the trail. So it is a plain reverse-chronological list — time,
+// who, what — and one search box. The four counter tiles, the four-way filter
+// row and the order / ECR / transition / detail columns all said the same thing
+// the list already says, and are gone. Search still matches on the detail text
+// behind each row, so nothing became unfindable.
+//
 // Two sources, both read-only:
 //   • s.audit — append-only, written by the store on every api.* call in this
 //     session. This is the real trail.
 //   • Reconstructed — the same record read back off the timestamps and actor
 //     columns already carried by the seeded orders, so the screen tells the full
-//     story of the trading day rather than only what you clicked. Labelled as
-//     such; nothing is invented.
+//     story of the trading day rather than only what you clicked. Nothing is
+//     invented.
 
 import { useMemo, useState } from 'react';
 import { useStore, select } from '../../../core/store';
 import type { OrderStatus, Role } from '../../../core/types';
-import { STATUS_LABEL } from '../../../core/stateMachine';
-import {
-  Card,
-  CardBody,
-  CardHeader,
-  Badge,
-  Button,
-  Select,
-  Input,
-  Field,
-  Table,
-  THead,
-  TBody,
-  TR,
-  TH,
-  TD,
-  Avatar,
-  EmptyState,
-  EcrTag,
-  Timestamp,
-  StatTile,
-} from '../../../ui/primitives';
+import { Input, Timestamp } from '../../../ui/primitives';
 import * as Icons from '../../../ui/icons';
 import { useT } from '../../../i18n';
 
@@ -43,8 +28,6 @@ interface Row {
   at: string;
   actorName: string;
   actorRole: Role | 'system';
-  actorInitials: string;
-  actorId?: number;
   orderId?: number;
   ecr?: string | null;
   action: string;
@@ -54,24 +37,10 @@ interface Row {
   live: boolean;
 }
 
-const ROLES: (Role | 'system')[] = [
-  'client',
-  'sales',
-  'clerk',
-  'driver',
-  'gate',
-  'cashier',
-  'admin',
-  'system',
-];
-
 export default function AuditTrail() {
   const t = useT();
   const s = useStore((x) => x);
 
-  const [actorId, setActorId] = useState<string>('all');
-  const [role, setRole] = useState<string>('all');
-  const [orderId, setOrderId] = useState<string>('all');
   const [q, setQ] = useState('');
 
   const rows = useMemo<Row[]>(() => {
@@ -80,8 +49,6 @@ export default function AuditTrail() {
       at: a.at,
       actorName: a.actorName,
       actorRole: a.actorRole,
-      actorInitials: s.users.find((u) => u.id === a.actorId)?.avatarInitials ?? '··',
-      actorId: a.actorId,
       orderId: a.orderId,
       ecr: a.ecr,
       action: a.action,
@@ -98,7 +65,7 @@ export default function AuditTrail() {
     const push = (
       at: string | undefined,
       userId: number | undefined,
-      partial: Omit<Row, 'key' | 'at' | 'actorName' | 'actorRole' | 'actorInitials' | 'live'>,
+      partial: Omit<Row, 'key' | 'at' | 'actorName' | 'actorRole' | 'live'>,
     ) => {
       if (!at) return;
       if (seen.has(`${partial.orderId}|${partial.action}`)) return;
@@ -108,8 +75,6 @@ export default function AuditTrail() {
         at,
         actorName: u?.name ?? 'Integration service',
         actorRole: u?.role ?? 'system',
-        actorInitials: u?.avatarInitials ?? 'SYS',
-        actorId: u?.id,
         live: false,
         ...partial,
       });
@@ -201,7 +166,6 @@ export default function AuditTrail() {
         at: l.createdAt,
         actorName: 'Integration service',
         actorRole: 'system',
-        actorInitials: 'SYS',
         orderId: l.orderId,
         ecr: l.ecr,
         action: `Oracle post attempt ${l.attemptNo} failed`,
@@ -217,206 +181,58 @@ export default function AuditTrail() {
     return [...live, ...history].sort((a, b) => b.at.localeCompare(a.at));
   }, [s.audit, s.orders, s.users, s.deliveryEvents, s.confirmationEvents, s.reconciliations, s.erpPostLogs]);
 
+  // One filter. It matches the detail text behind each row as well as the words
+  // on it, so a search by ECR or by a vehicle registration still finds the row.
   const filtered = rows.filter((r) => {
-    if (actorId !== 'all' && String(r.actorId ?? 'system') !== actorId) return false;
-    if (role !== 'all' && r.actorRole !== role) return false;
-    if (orderId !== 'all' && String(r.orderId ?? '') !== orderId) return false;
-    if (q.trim()) {
-      const hay = `${r.action} ${r.detail} ${r.ecr ?? ''} ${r.actorName}`.toLowerCase();
-      if (!hay.includes(q.trim().toLowerCase())) return false;
-    }
-    return true;
+    if (!q.trim()) return true;
+    const hay = `${r.action} ${r.detail} ${r.ecr ?? ''} ${r.actorName} ${r.actorRole}`.toLowerCase();
+    return hay.includes(q.trim().toLowerCase());
   });
 
-  const filtersOn = actorId !== 'all' || role !== 'all' || orderId !== 'all' || q.trim() !== '';
-
-  const orderOptions = useMemo(
-    () =>
-      [...s.orders]
-        .sort((a, b) => b.createdAt.localeCompare(a.createdAt))
-        .map((o) => ({
-          id: o.id,
-          label: `#${o.id} · ${o.ecr ?? 'no ECR'} · ${select.clientName(s, o.clientId)}`,
-        })),
-    [s.orders, s.clients],
-  );
-
   return (
-    <div className="mx-auto max-w-[1500px] px-6 py-6">
-      <header className="mb-5">
-        <h1 className="text-xl font-semibold tracking-tight text-fg">{t('Audit trail')}</h1>
-        <p className="mt-2 text-base text-fg-muted">
-          {t('Append-only. Every state change carries the actor, their role and the exact transition — no row is ever edited or deleted.')}
-        </p>
+    <div className="mx-auto max-w-[1100px] px-6 py-6">
+      <header className="mb-4 flex flex-wrap items-end justify-between gap-3">
+        <div className="min-w-0">
+          <h1 className="text-xl font-semibold leading-tight text-fg">{t('Audit trail')}</h1>
+          <p className="mt-1 text-base text-fg-muted">
+            {filtered.length === 1
+              ? t('One entry. Nothing here is ever edited or deleted.')
+              : t('{n} entries, newest first. Nothing here is ever edited or deleted.', {
+                  n: filtered.length,
+                })}
+          </p>
+        </div>
+        <div className="w-72">
+          <Input
+            value={q}
+            placeholder={t('Search')}
+            aria-label={t('Search')}
+            prefix={<Icons.Search className="h-4 w-4" />}
+            onChange={(e) => setQ(e.target.value)}
+          />
+        </div>
       </header>
 
-      <div className="mb-5 grid grid-cols-2 gap-3 lg:grid-cols-4">
-        <StatTile label="Entries" value={rows.length} icon={Icons.Clipboard} />
-        <StatTile
-          label="This session"
-          value={s.audit.length}
-          hint="written live by the store"
-          icon={Icons.Pen}
-        />
-        <StatTile
-          label="Actors"
-          value={new Set(rows.map((r) => r.actorName)).size}
-          icon={Icons.Users}
-        />
-        <StatTile
-          label="Orders touched"
-          value={new Set(rows.map((r) => r.orderId).filter(Boolean)).size}
-          icon={Icons.Box}
-        />
-      </div>
-
-      <Card>
-        <CardHeader
-          title="Filter"
-          action={
-            filtersOn && (
-              <Button
-                size="sm"
-                variant="ghost"
-                icon={Icons.X}
-                onClick={() => {
-                  setActorId('all');
-                  setRole('all');
-                  setOrderId('all');
-                  setQ('');
-                }}
-              >
-                Clear
-              </Button>
-            )
-          }
-        />
-        <CardBody className="grid grid-cols-1 gap-3 md:grid-cols-4">
-          <Field label="Actor">
-            <Select value={actorId} onChange={(e) => setActorId(e.target.value)}>
-              <option value="all">Everyone</option>
-              {s.users.map((u) => (
-                <option key={u.id} value={String(u.id)}>
-                  {u.name} — {u.role}
-                </option>
-              ))}
-              <option value="system">Integration service</option>
-            </Select>
-          </Field>
-          <Field label="Role">
-            <Select value={role} onChange={(e) => setRole(e.target.value)}>
-              <option value="all">All roles</option>
-              {ROLES.map((r) => (
-                <option key={r} value={r}>
-                  {r}
-                </option>
-              ))}
-            </Select>
-          </Field>
-          <Field label="Order">
-            <Select value={orderId} onChange={(e) => setOrderId(e.target.value)}>
-              <option value="all">All orders</option>
-              {orderOptions.map((o) => (
-                <option key={o.id} value={String(o.id)}>
-                  {o.label}
-                </option>
-              ))}
-            </Select>
-          </Field>
-          <Field label="Search">
-            <Input
-              value={q}
-              placeholder="action, ECR, detail…"
-              prefix={<Icons.Search className="h-3.5 w-3.5" />}
-              onChange={(e) => setQ(e.target.value)}
-            />
-          </Field>
-        </CardBody>
-      </Card>
-
-      <Card className="mt-4">
-        <CardHeader
-          title={`${filtered.length} entr${filtered.length === 1 ? 'y' : 'ies'}`}
-          subtitle="Newest first"
-        />
-        <CardBody className="p-0">
-          {filtered.length === 0 ? (
-            <EmptyState
-              icon={Icons.Filter}
-              title="Nothing matches those filters"
-              description="Widen the actor, role or order filter to see the trail again."
-            />
-          ) : (
-            <Table scrollHeight="34rem">
-              <THead sticky>
-                <TR>
-                  <TH>When</TH>
-                  <TH>Actor</TH>
-                  <TH>Order / ECR</TH>
-                  <TH>Transition</TH>
-                  <TH>Detail</TH>
-                </TR>
-              </THead>
-              <TBody>
-                {filtered.map((r) => (
-                  <TR key={r.key}>
-                    <TD muted>
-                      <Timestamp value={r.at} />
-                    </TD>
-                    <TD>
-                      <div className="flex items-center gap-2">
-                        <Avatar initials={r.actorInitials} size="sm" />
-                        <div className="min-w-0">
-                          <div className="truncate text-base text-fg">{r.actorName}</div>
-                          <div className="text-base capitalize text-fg-muted">{r.actorRole}</div>
-                        </div>
-                      </div>
-                    </TD>
-                    <TD>
-                      {r.orderId ? (
-                        <div className="flex flex-col gap-1">
-                          <span className="text-base text-fg-muted">#{r.orderId}</span>
-                          {r.ecr && <EcrTag value={r.ecr} />}
-                        </div>
-                      ) : (
-                        <span className="text-base text-fg-muted">—</span>
-                      )}
-                    </TD>
-                    <TD>
-                      {r.from || r.to ? (
-                        <span className="inline-flex items-center gap-2 text-base">
-                          {r.from && <Badge tone="neutral">{STATUS_LABEL[r.from]}</Badge>}
-                          <Icons.ChevronRight className="h-3 w-3 text-fg-dim" />
-                          {r.to && <Badge tone="info">{STATUS_LABEL[r.to]}</Badge>}
-                        </span>
-                      ) : (
-                        <span className="text-base text-fg">{r.action}</span>
-                      )}
-                    </TD>
-                    <TD muted>
-                      <div className="flex items-start gap-2">
-                        <span className="min-w-0 flex-1 text-base leading-relaxed">{r.detail}</span>
-                        {r.live ? (
-                          <Badge tone="success">live</Badge>
-                        ) : (
-                          <Badge tone="neutral">record</Badge>
-                        )}
-                      </div>
-                    </TD>
-                  </TR>
-                ))}
-              </TBody>
-            </Table>
-          )}
-        </CardBody>
-      </Card>
-
-      <p className="mt-4 text-base leading-relaxed text-fg-muted">
-        Rows marked <span className="text-success-fg">live</span> were written by the store during
-        this session as you acted. Rows marked <span className="text-fg-muted">record</span> are
-        reconstructed from the timestamps and actor columns already stored against each order — the
-        same data the trail would hold had the session been running all day.
-      </p>
+      {filtered.length === 0 ? (
+        <p className="border border-line px-4 py-4 text-base text-fg-muted">
+          {t('Nothing matches that search.')}
+        </p>
+      ) : (
+        <ul className="max-h-[38rem] overflow-y-auto border border-line">
+          {filtered.map((r) => (
+            <li
+              key={r.key}
+              className="flex flex-wrap items-baseline gap-x-4 gap-y-1 border-b border-line px-4 py-2.5 text-base last:border-b-0"
+            >
+              <span className="w-28 shrink-0 text-fg-muted">
+                <Timestamp value={r.at} />
+              </span>
+              <span className="w-40 shrink-0 truncate text-fg">{r.actorName}</span>
+              <span className="min-w-0 flex-1 text-fg-muted">{r.action}</span>
+            </li>
+          ))}
+        </ul>
+      )}
     </div>
   );
 }

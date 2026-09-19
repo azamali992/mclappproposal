@@ -55,19 +55,44 @@ export const urBackoffice: Dict = {
   'Monthly volume — real historical data': 'ماہانہ حجم — اصل تاریخی ڈیٹا',
 
   // ── Integration console ──────────────────────────────────────────────────
-  'Oracle ORDS posting — every attempt, its payload, its response, and its retry. The ECR is the idempotency key, so a document can never be raised twice.':
-    'اوریکل ORDS پوسٹنگ — ہر کوشش، اس کا پے لوڈ، جواب اور دوبارہ کوشش۔ ای سی آر ہی idempotency key ہے، اس لیے کوئی دستاویز دو بار جاری نہیں ہو سکتی۔',
-  'Demo control': 'ڈیمو کنٹرول',
-  'Oracle ORDS endpoint': 'اوریکل ORDS اینڈ پوائنٹ',
-  'Post attempts': 'پوسٹنگ کی کوششیں',
+  // One job: the posts that failed, and the button that sends them again.
+  // Everything else sits behind 'Show the detail'.
+  '{n} posts waiting to be sent again. The ECR is the idempotency key, so nothing can post twice.':
+    '{n} پوسٹنگ دوبارہ بھیجنے کے لیے منتظر ہیں۔ ای سی آر ہی idempotency key ہے، اس لیے کوئی چیز دو بار پوسٹ نہیں ہو سکتی۔',
+  'One post waiting to be sent again. The ECR is the idempotency key, so nothing can post twice.':
+    'ایک پوسٹنگ دوبارہ بھیجنے کے لیے منتظر ہے۔ ای سی آر ہی idempotency key ہے، اس لیے کوئی چیز دو بار پوسٹ نہیں ہو سکتی۔',
+  'Nothing failed. Every reconciled sale has reached Oracle.':
+    'کچھ ناکام نہیں ہوا۔ ہر ملان شدہ سودا اوریکل تک پہنچ چکا ہے۔',
+  // ECR then customer, in that order — the operator scans for the ECR.
+  '{ecr} · {client}': '{ecr} · {client}',
+  // The two error classes, said plainly rather than as 'terminal' / 'retryable'.
+  'Will not work again': 'دوبارہ کوشش کام نہیں کرے گی',
+  'Safe to send again': 'دوبارہ بھیجنا محفوظ ہے',
+  'Send it again': 'دوبارہ بھیجیں',
+  Replay: 'دوبارہ چلائیں',
+  'Hide the detail': 'تفصیل چھپائیں',
+  'Every attempt is kept. Every request carries idempotency_key = ecr, so replaying an ECR that already posted returns the same document number instead of raising a second sales order.':
+    'ہر کوشش محفوظ رہتی ہے۔ ہر درخواست کے ساتھ idempotency_key = ecr جاتا ہے، اس لیے پہلے سے پوسٹ شدہ ای سی آر دوبارہ چلانے پر وہی دستاویز نمبر واپس آتا ہے، دوسرا سیلز آرڈر نہیں بنتا۔',
+  'No posts yet.': 'ابھی کوئی پوسٹنگ نہیں۔',
 
   // ── Cash reconciliation queue ────────────────────────────────────────────
-  'Count the cash a returning route brought back, against what the delivered cylinders should have yielded.':
-    'واپس آنے والے روٹ کی لائی ہوئی نقدی گنیں اور موازنہ کریں کہ پہنچائے گئے سلنڈروں سے کتنی رقم بننی چاہیے تھی۔',
-  'This is the only path to Oracle.': 'اوریکل تک پہنچنے کا یہی واحد راستہ ہے۔',
-  'Routes back at the gate': 'گیٹ پر واپس آئے روٹ',
+  // One list of routes waiting to be counted, one button a row. The Oracle
+  // invariant is the second half of the sentence under the title — the four
+  // line box it used to sit in is gone.
+  '{n} routes waiting to be counted — nothing reaches Oracle until the count is confirmed here.':
+    '{n} روٹ گنتی کے منتظر — جب تک یہاں گنتی کی تصدیق نہ ہو، اوریکل تک کچھ نہیں پہنچتا۔',
+  'One route waiting to be counted — nothing reaches Oracle until the count is confirmed here.':
+    'ایک روٹ گنتی کا منتظر — جب تک یہاں گنتی کی تصدیق نہ ہو، اوریکل تک کچھ نہیں پہنچتا۔',
+  'Counting cash needs the cashier role — the API will refuse a confirmation from you.':
+    'نقد گننے کے لیے کیشیئر کا عہدہ درکار ہے — API آپ کی تصدیق قبول نہیں کرے گا۔',
+  'No cash waiting to be counted.': 'گنتی کے لیے کوئی نقدی باقی نہیں۔',
+  // The whole row: route, driver, how many orders. Nothing else.
+  '{route} · {driver} · {n} orders': '{route} · {driver} · {n} آرڈرز',
+  '{route} · {driver} · 1 order': '{route} · {driver} · 1 آرڈر',
+  'Held': 'روکا گیا',
+  'Count the cash': 'نقدی گنیں',
+  'Resolve': 'تصفیہ کریں',
   'Held — cash mismatch under investigation': 'روکا گیا — نقد میں فرق زیرِ تفتیش',
-  'Reconciled — Oracle posting': 'ملان مکمل — اوریکل پوسٹنگ',
 
   // ── Reconcile drawer — the demo's centrepiece ────────────────────────────
   'Rejected by the server — rule': 'سرور نے مسترد کر دیا — قاعدہ',
@@ -96,6 +121,7 @@ export const urBackoffice: Dict = {
   // ── Dispatch queue (clerk) ───────────────────────────────────────────────
   // One list, one button a row. The sentence under the title carries the only
   // number that mattered out of the five tiles that used to sit here.
+  'One order waiting': 'ایک آرڈر منتظر ہے',
   '{n} orders waiting': '{n} آرڈرز منتظر ہیں',
   'Nothing in the queue.': 'قطار میں کچھ نہیں۔',
   // The one next step a row ever offers.
@@ -113,10 +139,17 @@ export const urBackoffice: Dict = {
   Created: 'بنایا گیا',
 
   // ── Tab desk (gate) ──────────────────────────────────────────────────────
-  'Out with drivers': 'ڈرائیوروں کے پاس',
-  'On the rack': 'ریک پر موجود',
+  // The three counter tiles are gone; this sentence is the only count left.
+  'Out with drivers: {out} of {total}.': 'ڈرائیوروں کے پاس: {total} میں سے {out}۔',
+  'No tablets registered.': 'کوئی ٹیبلٹ درج نہیں۔',
+  '{tab} · with {driver}': '{tab} · {driver} کے پاس',
+  '{tab} · on the rack': '{tab} · ریک پر موجود',
+  'Which driver is taking it': 'کون سا ڈرائیور لے جا رہا ہے',
+  '{tab} goes to {driver}. Everything captured on it records this device id.':
+    '{tab} {driver} کو دیا جا رہا ہے۔ اس پر درج ہونے والی ہر چیز کے ساتھ یہی ڈیوائس آئی ڈی محفوظ ہوگی۔',
+  '{tab} returns to the rack. Records already captured keep their device id.':
+    '{tab} ریک پر واپس جا رہا ہے۔ پہلے سے درج ریکارڈز کی ڈیوائس آئی ڈی وہی رہے گی۔',
   'Out of service': 'ناکارہ',
-  Devices: 'ڈیوائسز',
   'Check tab back in': 'ٹیب واپس جمع کریں',
   'Check tab out': 'ٹیب جاری کریں',
 
@@ -128,8 +161,13 @@ export const urBackoffice: Dict = {
   'Order value': 'آرڈر کی مالیت',
 
   // ── Audit trail ──────────────────────────────────────────────────────────
-  'Append-only. Every state change carries the actor, their role and the exact transition — no row is ever edited or deleted.':
-    'صرف اضافہ۔ ہر تبدیلی کے ساتھ کارکن، اس کا عہدہ اور عین مرحلہ درج ہوتا ہے — کوئی سطر نہ بدلی جاتی ہے نہ حذف کی جاتی ہے۔',
+  // Time, who, what — and one search box. The counter tiles, the four way
+  // filter row and the order / ECR / transition / detail columns are gone.
+  '{n} entries, newest first. Nothing here is ever edited or deleted.':
+    '{n} اندراجات، تازہ ترین پہلے۔ یہاں کوئی چیز نہ بدلی جاتی ہے نہ حذف ہوتی ہے۔',
+  'One entry. Nothing here is ever edited or deleted.':
+    'ایک اندراج۔ یہاں کوئی چیز نہ بدلی جاتی ہے نہ حذف ہوتی ہے۔',
+  'Nothing matches that search.': 'اس تلاش سے کچھ نہیں ملا۔',
 
   // ── Self-collection (clerk + sales) ──────────────────────────────────────
   // "Collection" here always means the client's own van coming to the plant,

@@ -862,7 +862,7 @@ export function ClerkQueue() {
         <div className="flex flex-wrap items-center gap-3">
           <div className="min-w-0">
             <h1 className="text-xl font-semibold leading-tight text-fg">{t('Dispatch queue')}</h1>
-            <p className="text-base text-fg-muted">{t('{n} orders waiting', { n: waiting })}</p>
+            <p className="text-base text-fg-muted">{waiting === 1 ? t('One order waiting') : t('{n} orders waiting', { n: waiting })}</p>
           </div>
 
           <div className="relative ms-auto">
