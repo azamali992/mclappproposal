@@ -1,0 +1,10 @@
+node_modules
+dist
+.DS_Store
+*.local
+
+# ── Commercially sensitive: a year of MCL's real sales and purchase ledger.
+# Never commit this. The demo runs from src/core/realData.ts, which holds only
+# the distilled product and customer lists.
+*.xlsx
+*.xls

@@ -1,0 +1,1252 @@
+// ─── ClerkQueue — the warehouse dispatch desk ────────────────────────────────
+// The four-stage pipeline (Placed → Filled → Assigned → Dispatched) as lanes or
+// as one dense table, with the three verbs that move an order along it. Every
+// mutation goes through api.*; every rejection is shown verbatim, because the
+// rejections are the point.
+//
+// Keyboard (the clerk does this 200 times a day):
+//   /  search      ↑ ↓ / j k  move       Enter open       Esc close
+//   F  fill        A  assign             D  dispatch      C  cancel
+
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import type { Order, OrderStatus } from '../../../core/types';
+import {
+  api,
+  useStore,
+  useCurrentUser,
+  select,
+  RuleError,
+  orderCylinders,
+  orderValue,
+} from '../../../core/store';
+import { canTransition, STATUS_LABEL } from '../../../core/stateMachine';
+import { financialYear } from '../../../core/ecr';
+import { Button, Money, NumberStepper } from '../../../ui/primitives';
+import { Search, Truck, Warehouse, Clipboard, X, Alert, Box } from '../../../ui/icons';
+import { useT } from '../../../i18n';
+import OrderTable from '../shared/OrderTable';
+import {
+  EcrText,
+  OrderStatusPill,
+  OriginTag,
+  TONE_CLASS,
+  ageLabel,
+  cylindersOf,
+  fmtDate,
+  useRuleToast,
+} from '../shared/OrderTable';
+import OrderDetail from './OrderDetail';
+import DispatchModal from './DispatchModal';
+
+// Tolerates either `onChange(n)` or `onChange(event)` from the shared stepper.
+const asNumber = (v: any): number => {
+  if (typeof v === 'number') return Number.isFinite(v) ? v : 0;
+  const raw = v?.target?.value ?? v;
+  const n = Number(raw);
+  return Number.isFinite(n) ? n : 0;
+};
+
+// ─── Lanes ───────────────────────────────────────────────────────────────────
+
+interface Lane {
+  status: OrderStatus;
+  title: string;
+  hint: string;
+  verb?: 'fill' | 'assign' | 'dispatch';
+  verbLabel?: string;
+}
+
+const LANES: Lane[] = [
+  { status: 'PLACED', title: 'Placed', hint: 'Awaiting warehouse review', verb: 'fill', verbLabel: 'Review & fill' },
+  { status: 'FILLED', title: 'Filled', hint: 'Staged — needs a vehicle', verb: 'assign', verbLabel: 'Assign' },
+  { status: 'ASSIGNED', title: 'Assigned', hint: 'Loaded — no ECR yet', verb: 'dispatch', verbLabel: 'Dispatch' },
+  { status: 'DISPATCHED', title: 'Dispatched', hint: 'ECR allocated · on the road', verbLabel: undefined },
+];
+
+// ─── Buttons (local, so the screen never waits on the design agent) ──────────
+
+/**
+ * Thin alias over the design system's Button, so this screen has one verb style.
+ * There is no small variant any more — every button on this screen is the same
+ * full-size target, because the clerk is clicking them all day.
+ */
+function Btn({
+  children,
+  onClick,
+  kind = 'ghost',
+  disabled,
+  title,
+  full,
+}: {
+  children: React.ReactNode;
+  onClick?: () => void;
+  kind?: 'primary' | 'secondary' | 'ghost' | 'danger';
+  disabled?: boolean;
+  title?: string;
+  full?: boolean;
+}) {
+  return (
+    <Button
+      type="button"
+      variant={kind}
+      size="md"
+      block={full}
+      title={title}
+      disabled={disabled}
+      onClick={onClick}
+    >
+      {children}
+    </Button>
+  );
+}
+
+function Tile({
+  label,
+  value,
+  sub,
+  tone = 'neutral',
+}: {
+  label: string;
+  value: React.ReactNode;
+  sub?: React.ReactNode;
+  tone?: 'neutral' | 'warn';
+}) {
+  return (
+    <div className="min-w-0 flex-1 border border-line bg-surface px-4 py-3">
+      <div className="text-base text-fg-muted">{label}</div>
+      <div
+        className={`mt-1 font-mono text-xl tabular-nums leading-tight ${
+          tone === 'warn' ? 'text-warn-fg' : 'text-fg'
+        }`}
+      >
+        {value}
+      </div>
+      {sub && <div className="truncate text-base text-fg-muted">{sub}</div>}
+    </div>
+  );
+}
+
+function Shortcut({ k, children }: { k: string; children: React.ReactNode }) {
+  return (
+    <span className="whitespace-nowrap">
+      <kbd className="border border-line bg-surface px-1.5 font-mono text-base text-fg">{k}</kbd>{' '}
+      <span className="text-base text-fg-muted">{children}</span>
+    </span>
+  );
+}
+
+// ─── Modal frame ─────────────────────────────────────────────────────────────
+
+function ModalFrame({
+  title,
+  subtitle,
+  onClose,
+  children,
+  footer,
+  width = 'w-[40rem]',
+}: {
+  title: string;
+  subtitle?: string;
+  onClose: () => void;
+  children: React.ReactNode;
+  footer: React.ReactNode;
+  width?: string;
+}) {
+  useEffect(() => {
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key === 'Escape') {
+        e.preventDefault();
+        e.stopPropagation();
+        onClose();
+      }
+    };
+    window.addEventListener('keydown', onKey, true);
+    return () => window.removeEventListener('keydown', onKey, true);
+  }, [onClose]);
+
+  return (
+    <div className="fixed inset-0 z-modal flex items-center justify-center p-6" role="dialog" aria-modal="true" aria-label={title}>
+      <div className="absolute inset-0 bg-scrim" onClick={onClose} aria-hidden="true" />
+      <div className={`relative ${width} max-w-full overflow-hidden border border-line bg-surface`}>
+        <header className="flex items-start gap-3 border-b border-line bg-surface px-5 py-4">
+          <div className="min-w-0 flex-1">
+            <h2 className="text-xl font-semibold text-fg">{title}</h2>
+            {subtitle && <p className="mt-1 text-base text-fg-muted">{subtitle}</p>}
+          </div>
+          <button
+            type="button"
+            onClick={onClose}
+            aria-label="Close"
+            className="p-2 text-fg-muted hover:bg-surface-high hover:text-fg focus:outline-none focus-visible:ring-1 focus-visible:ring-accent"
+          >
+            <X className="h-5 w-5" />
+          </button>
+        </header>
+        <div className="max-h-[62vh] overflow-y-auto px-5 py-5">{children}</div>
+        <footer className="flex items-center justify-end gap-3 border-t border-line bg-surface px-5 py-4">
+          {footer}
+        </footer>
+      </div>
+    </div>
+  );
+}
+
+// ─── Fill modal ──────────────────────────────────────────────────────────────
+
+function FillModal({ orderId, onClose }: { orderId: number; onClose: () => void }) {
+  const s = useStore((st) => st);
+  const toast = useRuleToast();
+  const order = select.order(s, orderId);
+  const [loaded, setLoaded] = useState<Record<number, number>>(() =>
+    Object.fromEntries((order?.lines ?? []).map((l) => [l.id, l.qtyLoaded ?? l.qtyOrdered])),
+  );
+
+  if (!order) return null;
+  const client = select.client(s, order.clientId);
+  const staged = order.lines.reduce((t, l) => t + (loaded[l.id] ?? 0), 0);
+  const ordered = orderCylinders(order, 'qtyOrdered');
+  const short = staged < ordered;
+
+  const submit = () => {
+    try {
+      api.fillOrder(
+        order.id,
+        order.lines.map((l) => ({ lineId: l.id, qtyLoaded: loaded[l.id] ?? 0 })),
+      );
+      toast(
+        `Order #${order.id} filled — ${staged} cylinders staged${short ? ` (${ordered - staged} short)` : ''}.`,
+        'success',
+        'Filled',
+      );
+      onClose();
+    } catch (err) {
+      const msg = err instanceof RuleError ? err.message : (err as Error).message;
+      const rule = err instanceof RuleError ? err.rule : 'ERROR';
+      toast(msg, 'danger', `Fill blocked — ${rule}`);
+    }
+  };
+
+  return (
+    <ModalFrame
+      title={`Review & fill — ${client?.name ?? 'order'}`}
+      subtitle={`Order #${order.id} · ${order.origin === 'client_app' ? 'placed in the client app' : 'taken at the sales desk'} · requested ${fmtDate(order.requestedDate)}`}
+      onClose={onClose}
+      footer={
+        <>
+          <span className="me-auto text-base text-fg-muted">
+            Filling moves the order to <span className="text-fg">Filled</span>. No ECR is issued yet.
+          </span>
+          <Btn kind="ghost" onClick={onClose}>
+            Cancel
+          </Btn>
+          <Btn kind="primary" onClick={submit}>
+            <Box className="h-4 w-4" /> Confirm fill — {staged} cylinders
+          </Btn>
+        </>
+      }
+    >
+      {order.notes && (
+        <p className="mb-4 border border-line px-3 py-2 text-base text-fg">
+          <span className="font-semibold">Order note:</span> {order.notes}
+        </p>
+      )}
+
+      <div className="mb-4 grid grid-cols-3 gap-3 text-base">
+        <div className="border border-line bg-surface px-3 py-2.5">
+          <div className="text-base text-fg-muted">Client</div>
+          <div className="truncate text-fg">{client?.name}</div>
+          <div className="truncate text-base text-fg-muted">{client?.area}</div>
+        </div>
+        <div className="border border-line bg-surface px-3 py-2.5">
+          <div className="text-base text-fg-muted">Book type and location</div>
+          <div className="truncate text-fg">{select.bookType(s, order.bookTypeId)?.name}</div>
+          <div className="truncate text-base text-fg-muted">{select.location(s, order.locationId)?.name}</div>
+        </div>
+        <div className="border border-line bg-surface px-3 py-2.5">
+          <div className="text-base text-fg-muted">Payment</div>
+          <div className={client?.paymentTerms === 'credit' ? 'text-warn-fg' : 'text-success-fg'}>
+            {client?.paymentTerms === 'credit' ? 'Credit' : 'Cash on delivery'}
+          </div>
+          <div className="truncate text-base text-fg-muted">
+            confirms by {client?.confirmMethod === 'otp' ? 'OTP' : 'signature'}
+          </div>
+        </div>
+      </div>
+
+      <table className="w-full border-collapse border border-line text-base">
+        <thead>
+          <tr className="border-b border-line bg-surface text-base text-fg">
+            <th className="px-3 py-3 text-left font-semibold">Product</th>
+            <th className="px-3 py-3 text-right font-semibold">Ordered</th>
+            <th className="px-3 py-3 text-center font-semibold">Put on the truck</th>
+            <th className="px-3 py-3 text-right font-semibold">Difference</th>
+            <th className="px-3 py-3 text-right font-semibold">Value</th>
+          </tr>
+        </thead>
+        <tbody>
+          {order.lines.map((l) => {
+            const p = select.product(s, l.productId);
+            const v = (loaded[l.id] ?? 0) - l.qtyOrdered;
+            return (
+              <tr key={l.id} className="border-t border-line">
+                <td className="px-3 py-3">
+                  <div className="font-medium text-fg">{p?.name}</div>
+                  <div className="text-base text-fg-muted">
+                    <span className="font-mono">{p?.sku}</span> · {p?.size}
+                  </div>
+                </td>
+                <td className="px-3 py-3 text-right font-mono tabular-nums text-fg-muted">{l.qtyOrdered}</td>
+                <td className="px-3 py-3">
+                  <div className="flex justify-center">
+                    <NumberStepper
+                      value={loaded[l.id] ?? 0}
+                      min={0}
+                      max={l.qtyOrdered}
+                      onChange={(v2: any) =>
+                        setLoaded((prev) => ({ ...prev, [l.id]: Math.max(0, Math.min(l.qtyOrdered, asNumber(v2))) }))
+                      }
+                    />
+                  </div>
+                </td>
+                <td
+                  className={`px-3 py-3 text-right font-mono tabular-nums ${
+                    v < 0 ? 'text-warn-fg' : 'text-fg-muted'
+                  }`}
+                >
+                  {v === 0 ? '—' : v}
+                </td>
+                <td className="px-3 py-3 text-right font-mono tabular-nums text-fg">
+                  <Money value={(loaded[l.id] ?? 0) * l.unitPrice} />
+                </td>
+              </tr>
+            );
+          })}
+        </tbody>
+        <tfoot>
+          <tr className="border-t border-line bg-surface">
+            <td className="px-3 py-3 text-base font-semibold text-fg">Totals</td>
+            <td className="px-3 py-3 text-right font-mono tabular-nums text-fg-muted">{ordered}</td>
+            <td className="px-3 py-3 text-center font-mono tabular-nums text-fg">{staged}</td>
+            <td className={`px-3 py-3 text-right font-mono tabular-nums ${short ? 'text-warn-fg' : 'text-fg-muted'}`}>
+              {staged - ordered === 0 ? '—' : staged - ordered}
+            </td>
+            <td className="px-3 py-3 text-right font-mono tabular-nums text-fg">
+              <Money value={order.lines.reduce((t, l) => t + (loaded[l.id] ?? 0) * l.unitPrice, 0)} />
+            </td>
+          </tr>
+        </tfoot>
+      </table>
+
+      {short && (
+        <div className={`mt-4 flex gap-2 border px-3 py-3 text-base ${TONE_CLASS.warn}`}>
+          <Alert className="mt-0.5 h-4 w-4 flex-none" />
+          <span>
+            Short fill — {ordered - staged} cylinder(s) below the order. That is normal here; the loaded
+            quantity, not the ordered one, is what the driver carries, what the client signs for and what
+            reaches Oracle.
+          </span>
+        </div>
+      )}
+    </ModalFrame>
+  );
+}
+
+// ─── Assign modal ────────────────────────────────────────────────────────────
+
+function AssignModal({ orderId, onClose }: { orderId: number; onClose: () => void }) {
+  const s = useStore((st) => st);
+  const toast = useRuleToast();
+  const order = select.order(s, orderId);
+  const client = order ? select.client(s, order.clientId) : undefined;
+
+  const [vehicleId, setVehicleId] = useState<number>(() => order?.vehicleId ?? s.vehicles.find((v) => v.active)?.id ?? 0);
+  const [routeId, setRouteId] = useState<number>(
+    () => order?.routeId ?? client?.defaultRouteId ?? s.routes.find((r) => r.active)?.id ?? 0,
+  );
+  const [driverId, setDriverId] = useState<number>(
+    () => order?.driverId ?? s.users.find((u) => u.role === 'driver')?.id ?? 0,
+  );
+  const [loaded, setLoaded] = useState<Record<number, number>>(() =>
+    Object.fromEntries((order?.lines ?? []).map((l) => [l.id, l.qtyLoaded ?? l.qtyOrdered])),
+  );
+
+  if (!order) return null;
+
+  const vehicle = s.vehicles.find((v) => v.id === vehicleId);
+  const vclass = s.vehicleClasses.find((c) => c.id === vehicle?.classId);
+  const max = vclass?.maxCylinders ?? 0;
+
+  const alreadyOn = s.orders
+    .filter((x) => x.id !== order.id && x.vehicleId === vehicleId && ['ASSIGNED', 'DISPATCHED'].includes(x.status))
+    .reduce((t, x) => t + orderCylinders(x, 'qtyLoaded'), 0);
+  const thisLoad = order.lines.reduce((t, l) => t + (loaded[l.id] ?? 0), 0);
+  const total = alreadyOn + thisLoad;
+  const pct = max ? (total / max) * 100 : 0;
+  const over = total > max;
+
+  const alreadyPct = max ? Math.min(100, (alreadyOn / max) * 100) : 0;
+  const thisPct = max ? Math.min(100 - alreadyPct, (thisLoad / max) * 100) : 0;
+
+  const submit = () => {
+    try {
+      api.assignOrder(order.id, {
+        vehicleId,
+        routeId,
+        driverId,
+        lines: order.lines.map((l) => ({ lineId: l.id, qtyLoaded: loaded[l.id] ?? 0 })),
+      });
+      toast(
+        `Order #${order.id} assigned to ${vehicle?.registration} on ${s.routes.find((r) => r.id === routeId)?.code}.`,
+        'success',
+        'Assigned',
+      );
+      onClose();
+    } catch (err) {
+      const msg = err instanceof RuleError ? err.message : (err as Error).message;
+      const rule = err instanceof RuleError ? err.rule : 'ERROR';
+      toast(msg, 'danger', `Assignment refused — ${rule}`);
+    }
+  };
+
+  const selectCls =
+    'w-full border border-line bg-surface px-3 py-2.5 text-base text-fg focus:border-fg focus:outline-none focus-visible:ring-1 focus-visible:ring-accent';
+
+  return (
+    <ModalFrame
+      title={`Assign vehicle — ${client?.name ?? 'order'}`}
+      subtitle={`Order #${order.id} · ${thisLoad} cylinders staged · capacity is checked by the server, not this screen`}
+      onClose={onClose}
+      width="w-[44rem]"
+      footer={
+        <>
+          <span className="me-auto text-base text-fg-muted">
+            {over
+              ? 'This load exceeds the vehicle class. Submit it — the rule engine will refuse it.'
+              : 'Assigning moves the order to Assigned. Still no ECR.'}
+          </span>
+          <Btn kind="ghost" onClick={onClose}>
+            Cancel
+          </Btn>
+          <Btn kind="primary" onClick={submit}>
+            <Truck className="h-3.5 w-3.5" /> Assign
+          </Btn>
+        </>
+      }
+    >
+      <div className="grid grid-cols-3 gap-4">
+        <label className="block">
+          <span className="mb-1.5 block text-base font-medium text-fg">Vehicle</span>
+          <select className={selectCls} value={vehicleId} onChange={(e) => setVehicleId(Number(e.target.value))}>
+            {s.vehicles
+              .filter((v) => v.active)
+              .map((v) => {
+                const c = s.vehicleClasses.find((x) => x.id === v.classId);
+                return (
+                  <option key={v.id} value={v.id}>
+                    {v.registration} — {c?.name}, holds {c?.maxCylinders} cylinders
+                  </option>
+                );
+              })}
+          </select>
+        </label>
+        <label className="block">
+          <span className="mb-1.5 block text-base font-medium text-fg">Route</span>
+          <select className={selectCls} value={routeId} onChange={(e) => setRouteId(Number(e.target.value))}>
+            {s.routes
+              .filter((r) => r.active)
+              .map((r) => (
+                <option key={r.id} value={r.id}>
+                  {r.code} — {r.name}
+                </option>
+              ))}
+          </select>
+          {client?.defaultRouteId && client.defaultRouteId !== routeId && (
+            <span className="mt-1.5 block text-base text-warn-fg">
+              Client&rsquo;s usual route is {s.routes.find((r) => r.id === client.defaultRouteId)?.code}.
+            </span>
+          )}
+        </label>
+        <label className="block">
+          <span className="mb-1.5 block text-base font-medium text-fg">Driver</span>
+          <select className={selectCls} value={driverId} onChange={(e) => setDriverId(Number(e.target.value))}>
+            {s.users
+              .filter((u) => u.role === 'driver')
+              .map((u) => {
+                const load = s.orders.filter(
+                  (o) => o.driverId === u.id && ['ASSIGNED', 'DISPATCHED'].includes(o.status),
+                ).length;
+                return (
+                  <option key={u.id} value={u.id}>
+                    {u.name} — {load} order(s) on hand
+                  </option>
+                );
+              })}
+          </select>
+        </label>
+      </div>
+
+      {/* ── Live capacity ────────────────────────────────────────────────── */}
+      <div className="mt-5 border border-line bg-surface p-4">
+        <div className="mb-2 flex items-baseline justify-between">
+          <h3 className="text-lg font-semibold text-fg">
+            How full {vehicle?.registration ?? 'the vehicle'} is today
+          </h3>
+          <span className={`font-mono text-lg tabular-nums ${over ? 'text-danger-fg' : 'text-fg'}`}>
+            {total} of {max} cylinders · {Math.round(pct)}%
+          </span>
+        </div>
+
+        <div className="h-4 w-full overflow-hidden border border-line bg-surface">
+          <div className="flex h-full w-full">
+            <div
+              className="h-full bg-info"
+              style={{ width: `${alreadyPct}%` }}
+              title={`Already loaded: ${alreadyOn}`}
+            />
+            <div
+              className={`h-full ${over ? 'bg-danger' : 'bg-fg-muted'}`}
+              style={{ width: `${thisPct}%` }}
+              title={`This order: ${thisLoad}`}
+            />
+          </div>
+        </div>
+
+        <div className="mt-3 flex flex-wrap items-center gap-x-6 gap-y-1 text-base">
+          <span className="flex items-center gap-2 text-fg-muted">
+            <span className="h-3 w-3 bg-info" /> Already loaded{' '}
+            <span className="font-mono tabular-nums text-fg">{alreadyOn}</span>
+          </span>
+          <span className="flex items-center gap-2 text-fg-muted">
+            <span className={`h-3 w-3 ${over ? 'bg-danger' : 'bg-fg-muted'}`} /> This order{' '}
+            <span className="font-mono tabular-nums text-fg">{thisLoad}</span>
+          </span>
+          <span className="flex items-center gap-2 text-fg-muted">
+            <span className="h-3 w-3 border border-line" /> Most this vehicle may carry{' '}
+            <span className="font-mono tabular-nums text-fg">{max}</span> ({vclass?.name})
+          </span>
+        </div>
+
+        {over && (
+          <div className={`mt-3 flex gap-2 border px-3 py-3 text-base ${TONE_CLASS.danger}`}>
+            <Alert className="mt-0.5 h-4 w-4 flex-none" />
+            <span>
+              {total - max} cylinder(s) over the {vclass?.name} limit. The server will reject this
+              assignment — capacity is enforced in the API, not in the browser, so it holds however the
+              request arrives.
+            </span>
+          </div>
+        )}
+      </div>
+
+      {/* ── Load adjustment ──────────────────────────────────────────────── */}
+      <div className="mt-5">
+        <h3 className="mb-2 text-lg font-semibold text-fg">What goes on the truck</h3>
+        <table className="w-full border-collapse border border-line text-base">
+          <thead>
+            <tr className="border-b border-line bg-surface text-base text-fg">
+              <th className="px-3 py-3 text-left font-semibold">Product</th>
+              <th className="px-3 py-3 text-right font-semibold">Ordered</th>
+              <th className="px-3 py-3 text-center font-semibold">On the truck</th>
+            </tr>
+          </thead>
+          <tbody>
+            {order.lines.map((l) => {
+              const p = select.product(s, l.productId);
+              return (
+                <tr key={l.id} className="border-t border-line">
+                  <td className="px-3 py-3">
+                    <span className="font-medium text-fg">{p?.name}</span>{' '}
+                    <span className="text-base text-fg-muted">{p?.size}</span>
+                  </td>
+                  <td className="px-3 py-3 text-right font-mono tabular-nums text-fg-muted">{l.qtyOrdered}</td>
+                  <td className="px-3 py-3">
+                    <div className="flex justify-center">
+                      <NumberStepper
+                        value={loaded[l.id] ?? 0}
+                        min={0}
+                        max={l.qtyOrdered}
+                        onChange={(v: any) =>
+                          setLoaded((prev) => ({ ...prev, [l.id]: Math.max(0, asNumber(v)) }))
+                        }
+                      />
+                    </div>
+                  </td>
+                </tr>
+              );
+            })}
+          </tbody>
+        </table>
+      </div>
+    </ModalFrame>
+  );
+}
+
+// ─── Cancel modal ────────────────────────────────────────────────────────────
+
+const CANCEL_REASONS = [
+  'Client cancelled by phone',
+  'Stock not available at this location',
+  'Duplicate order',
+  'Credit hold — account over limit',
+  'Vehicle breakdown, rebooking',
+];
+
+function CancelModal({ orderId, onClose }: { orderId: number; onClose: () => void }) {
+  const s = useStore((st) => st);
+  const toast = useRuleToast();
+  const order = select.order(s, orderId);
+  const [reason, setReason] = useState('');
+
+  if (!order) return null;
+  const allowed = canTransition(order.status, 'CANCELLED');
+
+  const submit = () => {
+    try {
+      api.cancelOrder(order.id, reason.trim());
+      toast(`Order #${order.id} cancelled — ${reason.trim()}`, 'success', 'Cancelled');
+      onClose();
+    } catch (err) {
+      const msg = err instanceof RuleError ? err.message : (err as Error).message;
+      toast(msg, 'danger', 'Cancellation blocked');
+    }
+  };
+
+  return (
+    <ModalFrame
+      title={`Cancel order #${order.id}`}
+      subtitle={`${select.clientName(s, order.clientId)} · currently ${STATUS_LABEL[order.status]}`}
+      onClose={onClose}
+      width="w-[34rem]"
+      footer={
+        <>
+          <Btn kind="ghost" onClick={onClose}>
+            Keep the order
+          </Btn>
+          <Btn kind="danger" onClick={submit} disabled={!allowed || reason.trim().length < 3}>
+            Cancel the order
+          </Btn>
+        </>
+      }
+    >
+      {!allowed ? (
+        <div className={`flex gap-2 border px-4 py-3 text-base ${TONE_CLASS.danger}`}>
+          <Alert className="mt-0.5 h-5 w-5 flex-none" />
+          <span>
+            An order at {STATUS_LABEL[order.status]} cannot be cancelled. Once the ECR is allocated the
+            document exists and must be closed out through delivery or dispute, never deleted.
+          </span>
+        </div>
+      ) : (
+        <>
+          <p className="text-base text-fg-muted">
+            The order will move to Cancelled and leave the queue. The reason is written to the audit trail
+            against your name.
+            {order.ecr ? '' : ' No ECR has been issued, so no number is wasted.'}
+          </p>
+          <div className="mt-4 flex flex-wrap gap-2">
+            {CANCEL_REASONS.map((r) => (
+              <button
+                key={r}
+                type="button"
+                onClick={() => setReason(r)}
+                className={`border px-3 py-2 text-base ${
+                  reason === r
+                    ? 'border-line bg-surface-high font-semibold text-fg'
+                    : 'border-line bg-surface text-fg hover:bg-surface-high'
+                }`}
+              >
+                {r}
+              </button>
+            ))}
+          </div>
+          <textarea
+            value={reason}
+            autoFocus
+            onChange={(e) => setReason(e.target.value)}
+            rows={3}
+            placeholder="Reason for cancellation (required)"
+            className="mt-4 w-full border border-line bg-surface px-3 py-2.5 text-base text-fg placeholder:text-fg-muted focus:border-fg focus:outline-none"
+          />
+        </>
+      )}
+    </ModalFrame>
+  );
+}
+
+// ─── ECR counter strip ───────────────────────────────────────────────────────
+
+function EcrCounters({ locationId, highlightKey }: { locationId: number; highlightKey?: string | null }) {
+  const s = useStore((st) => st);
+  const yy = financialYear();
+
+  const rows = Object.entries(s.ecrSequences)
+    .map(([k, next]) => {
+      const [year, ll, bb] = k.split('|');
+      return {
+        k,
+        year,
+        ll,
+        bb,
+        next,
+        location: s.locations.find((l) => l.code === ll),
+        book: s.bookTypes.find((b) => b.code === bb),
+      };
+    })
+    .filter((r) => r.year === yy && r.location?.id === locationId)
+    .sort((a, b) => a.bb.localeCompare(b.bb));
+
+  return (
+    <section className="border border-line bg-surface p-4">
+      <div className="mb-3">
+        <h2 className="text-lg font-semibold text-fg">
+          Next ECR number in each book — {s.locations.find((l) => l.id === locationId)?.name}
+        </h2>
+        <p className="text-base text-fg-muted">
+          Financial year {yy}. Only a confirmed dispatch moves one of these on.
+        </p>
+      </div>
+      <div className="grid grid-cols-2 gap-3 lg:grid-cols-3 xl:grid-cols-5">
+        {rows.map((r) => {
+          const on = highlightKey === r.k;
+          return (
+            <div
+              key={r.k}
+              className={`border border-line px-3 py-2.5 ${on ? 'bg-surface-high' : 'bg-surface'}`}
+            >
+              <div className="truncate text-base text-fg-muted">{r.book?.name ?? `Book ${r.bb}`}</div>
+              <div className="font-mono text-lg tabular-nums">
+                <span className="text-fg-muted">
+                  {r.year} {r.ll} {r.bb}{' '}
+                </span>
+                <span className={on ? 'font-semibold text-fg' : 'text-fg'}>
+                  {String(r.next).padStart(4, '0')}
+                </span>
+              </div>
+              <div className="text-base text-fg-muted">
+                {r.next - 1} issued this year{on ? ' · next for this order' : ''}
+              </div>
+            </div>
+          );
+        })}
+      </div>
+    </section>
+  );
+}
+
+// ─── Lane card ───────────────────────────────────────────────────────────────
+
+function LaneCard({
+  order,
+  lane,
+  selected,
+  onSelect,
+  onVerb,
+  onCancel,
+}: {
+  order: Order;
+  lane: Lane;
+  selected: boolean;
+  onSelect: () => void;
+  onVerb: () => void;
+  onCancel: () => void;
+}) {
+  const s = useStore((st) => st);
+  const client = select.client(s, order.clientId);
+  const vehicle = select.vehicle(s, order.vehicleId);
+  const driver = select.user(s, order.driverId);
+  const route = select.route(s, order.routeId);
+  const short = order.lines.some((l) => (l.qtyLoaded ?? l.qtyOrdered) < l.qtyOrdered);
+
+  return (
+    <article
+      tabIndex={0}
+      onClick={onSelect}
+      onKeyDown={(e) => {
+        if (e.key === 'Enter') {
+          e.preventDefault();
+          onSelect();
+        }
+      }}
+      aria-selected={selected}
+      className={`cursor-pointer border bg-surface p-3.5 text-left outline-none ${
+        selected ? 'border-line bg-surface-high' : 'border-line hover:bg-surface-high'
+      }`}
+    >
+      <div className="flex items-center gap-2">
+        <span className="font-mono text-base tabular-nums text-fg-muted">#{order.id}</span>
+        <OriginTag origin={order.origin} />
+        <span
+          className="ms-auto font-mono text-base tabular-nums text-fg-muted"
+          title="Time since the order was placed"
+        >
+          waiting {ageLabel(order.createdAt)}
+        </span>
+      </div>
+
+      <div className={`mt-2 truncate text-lg text-fg ${selected ? 'font-bold' : 'font-semibold'}`}>
+        {client?.name}
+      </div>
+      <div className="truncate text-base text-fg-muted">
+        {client?.area} ·{' '}
+        <span className={client?.paymentTerms === 'credit' ? 'text-warn-fg' : 'text-success-fg'}>
+          {client?.paymentTerms === 'credit' ? 'Credit' : 'Cash'}
+        </span>{' '}
+        · wanted {fmtDate(order.requestedDate)}
+      </div>
+
+      <ul className="mt-3 space-y-1 border-t border-line pt-3">
+        {order.lines.map((l) => {
+          const p = select.product(s, l.productId);
+          const qty = l.qtyLoaded ?? l.qtyOrdered;
+          return (
+            <li key={l.id} className="flex items-baseline gap-2 text-base">
+              <span className="min-w-0 flex-1 truncate text-fg">
+                {p?.name} <span className="text-fg-muted">{p?.size}</span>
+              </span>
+              <span className="font-mono tabular-nums text-fg">{qty}</span>
+              {l.qtyLoaded != null && l.qtyLoaded < l.qtyOrdered && (
+                <span className="font-mono tabular-nums text-warn-fg">/{l.qtyOrdered}</span>
+              )}
+            </li>
+          );
+        })}
+      </ul>
+
+      {(vehicle || route) && (
+        <div className="mt-3 flex flex-wrap items-center gap-x-3 gap-y-1 border-t border-line pt-3 text-base text-fg-muted">
+          <span className="font-mono text-fg-muted">{vehicle?.registration}</span>
+          <span>{route?.code}</span>
+          <span>{driver?.name}</span>
+        </div>
+      )}
+
+      <div className="mt-3 flex items-center gap-3 border-t border-line pt-3">
+        <span className="font-mono text-base tabular-nums text-fg">{cylindersOf(order)} cylinders</span>
+        <span className="font-mono text-base tabular-nums text-fg">
+          <Money value={orderValue(order)} />
+        </span>
+        {short && <span className={`border px-2 text-base ${TONE_CLASS.warn}`}>short fill</span>}
+        {order.status === 'DISPATCHED' ? (
+          <span className="ms-auto">
+            <EcrText ecr={order.ecr} />
+          </span>
+        ) : (
+          <span className="ms-auto text-base text-fg-muted">No ECR number yet</span>
+        )}
+      </div>
+
+      {lane.verb && (
+        <div className="mt-3 flex gap-2">
+          <Btn
+            kind={lane.verb === 'dispatch' ? 'primary' : 'secondary'}
+            full
+            onClick={() => {
+              onSelect();
+              onVerb();
+            }}
+          >
+            {lane.verbLabel}
+          </Btn>
+          <Btn kind="ghost" onClick={onCancel} title="Cancel this order">
+            <X className="h-4 w-4" />
+          </Btn>
+        </div>
+      )}
+    </article>
+  );
+}
+
+// ─── Screen ──────────────────────────────────────────────────────────────────
+
+export function ClerkQueue() {
+  const t = useT();
+  const s = useStore((st) => st);
+  const me = useCurrentUser();
+  const toast = useRuleToast();
+
+  const [locationId, setLocationId] = useState<number>(me.locationId ?? 1);
+  const [view, setView] = useState<'lanes' | 'table'>('lanes');
+  const [query, setQuery] = useState('');
+  const [selectedId, setSelectedId] = useState<number | null>(null);
+  const [detailOpen, setDetailOpen] = useState(false);
+  const [fillFor, setFillFor] = useState<number | null>(null);
+  const [assignFor, setAssignFor] = useState<number | null>(null);
+  const [cancelFor, setCancelFor] = useState<number | null>(null);
+  const [dispatchFor, setDispatchFor] = useState<number | null>(null);
+  const searchRef = useRef<HTMLInputElement | null>(null);
+
+  const modalOpen = fillFor != null || assignFor != null || cancelFor != null || dispatchFor != null;
+
+  // ── Data ────────────────────────────────────────────────────────────────
+  const matches = useCallback(
+    (o: Order) => {
+      const q = query.trim().toLowerCase();
+      if (!q) return true;
+      const client = select.client(s, o.clientId);
+      const hay = [
+        String(o.id),
+        o.ecr ?? '',
+        client?.name ?? '',
+        client?.area ?? '',
+        select.route(s, o.routeId)?.code ?? '',
+        select.vehicle(s, o.vehicleId)?.registration ?? '',
+        ...o.lines.map((l) => select.product(s, l.productId)?.name ?? ''),
+      ]
+        .join(' ')
+        .toLowerCase();
+      return hay.includes(q);
+    },
+    [query, s],
+  );
+
+  const byLane = useMemo(() => {
+    const at = s.orders.filter((o) => o.locationId === locationId);
+    const map: Record<string, Order[]> = {};
+    for (const lane of LANES) {
+      map[lane.status] = at
+        .filter((o) => o.status === lane.status && matches(o))
+        .sort((a, b) => a.createdAt.localeCompare(b.createdAt));
+    }
+    return map;
+  }, [s.orders, locationId, matches]);
+
+  const flat = useMemo(() => LANES.flatMap((l) => byLane[l.status] ?? []), [byLane]);
+  const selected = selectedId == null ? undefined : select.order(s, selectedId);
+
+  const queueTotals = useMemo(() => {
+    const open = [...(byLane.PLACED ?? []), ...(byLane.FILLED ?? []), ...(byLane.ASSIGNED ?? [])];
+    return {
+      open: open.length,
+      cylinders: open.reduce((t, o) => t + cylindersOf(o), 0),
+      value: open.reduce((t, o) => t + orderValue(o), 0),
+      dispatched: (byLane.DISPATCHED ?? []).length,
+      dispatchedCyl: (byLane.DISPATCHED ?? []).reduce((t, o) => t + cylindersOf(o), 0),
+    };
+  }, [byLane]);
+
+  const highlightKey = selected
+    ? `${financialYear()}|${select.location(s, selected.locationId)?.code}|${select.bookType(s, selected.bookTypeId)?.code}`
+    : null;
+
+  // ── Verbs ───────────────────────────────────────────────────────────────
+  const openVerb = useCallback(
+    (order: Order | undefined, verb: Lane['verb'] | 'cancel') => {
+      if (!order) return;
+      if (verb === 'fill') {
+        if (order.status !== 'PLACED') {
+          toast(`Order #${order.id} is ${STATUS_LABEL[order.status]} — only a Placed order can be filled.`, 'warn');
+          return;
+        }
+        setFillFor(order.id);
+      } else if (verb === 'assign') {
+        // ASSIGNED → ASSIGNED is not a legal transition, so re-assignment is not
+        // offered. Say why rather than letting the state machine throw.
+        if (order.status === 'ASSIGNED') {
+          toast(
+            `Order #${order.id} is already assigned. The state machine has no ASSIGNED → ASSIGNED step — cancel and re-raise it to move the load to another vehicle.`,
+            'warn',
+            'Re-assignment not permitted',
+          );
+          return;
+        }
+        if (order.status !== 'FILLED') {
+          toast(`Fill order #${order.id} before assigning a vehicle.`, 'warn');
+          return;
+        }
+        setAssignFor(order.id);
+      } else if (verb === 'dispatch') {
+        if (order.status !== 'ASSIGNED') {
+          toast(`Order #${order.id} must be Assigned before dispatch can allocate an ECR.`, 'warn');
+          return;
+        }
+        setDispatchFor(order.id);
+      } else if (verb === 'cancel') {
+        setCancelFor(order.id);
+      }
+    },
+    [toast],
+  );
+
+  // ── Keyboard ────────────────────────────────────────────────────────────
+  useEffect(() => {
+    const onKey = (e: KeyboardEvent) => {
+      const el = e.target as HTMLElement | null;
+      const typing = !!el && /^(INPUT|TEXTAREA|SELECT)$/.test(el.tagName);
+      if (e.metaKey || e.ctrlKey || e.altKey) return;
+
+      if (e.key === '/' && !typing) {
+        e.preventDefault();
+        searchRef.current?.focus();
+        return;
+      }
+      if (e.key === 'Escape' && typing) {
+        (el as HTMLInputElement).blur();
+        return;
+      }
+      if (typing || modalOpen) return;
+
+      if (e.key === 'Escape') {
+        setDetailOpen(false);
+        return;
+      }
+      if (e.key === 'ArrowDown' || e.key === 'j' || e.key === 'ArrowUp' || e.key === 'k') {
+        if (!flat.length) return;
+        e.preventDefault();
+        const dir = e.key === 'ArrowDown' || e.key === 'j' ? 1 : -1;
+        const i = flat.findIndex((o) => o.id === selectedId);
+        const next = i === -1 ? 0 : Math.min(flat.length - 1, Math.max(0, i + dir));
+        setSelectedId(flat[next].id);
+        return;
+      }
+      if (e.key === 'Enter') {
+        if (selectedId != null) {
+          e.preventDefault();
+          setDetailOpen(true);
+        }
+        return;
+      }
+      const k = e.key.toLowerCase();
+      if (k === 'f') openVerb(selected, 'fill');
+      else if (k === 'a') openVerb(selected, 'assign');
+      else if (k === 'd') openVerb(selected, 'dispatch');
+      else if (k === 'c') openVerb(selected, 'cancel');
+    };
+    window.addEventListener('keydown', onKey);
+    return () => window.removeEventListener('keydown', onKey);
+  }, [flat, selectedId, selected, openVerb, modalOpen]);
+
+  const inputCls =
+    'border border-line bg-surface px-3 py-2 text-base text-fg placeholder:text-fg-muted focus:border-fg focus:outline-none';
+
+  return (
+    <div className="flex h-full min-h-0 flex-col bg-surface">
+      {/* ── Toolbar ──────────────────────────────────────────────────────── */}
+      <header className="flex-none border-b border-line bg-surface px-4 py-3">
+        <div className="flex flex-wrap items-center gap-3">
+          <div className="flex items-center gap-2">
+            <Warehouse className="h-5 w-5 text-fg-muted" />
+            <div>
+              <h1 className="text-xl font-semibold leading-tight text-fg">{t('Dispatch queue')}</h1>
+              <p className="text-base text-fg-muted">
+                {t('Fill, assign, dispatch — the ECR is issued at the last step, never before.')}
+              </p>
+            </div>
+          </div>
+
+          <div className="ms-auto flex flex-wrap items-center gap-2">
+            <div className="relative">
+              <Search className="pointer-events-none absolute start-3 top-1/2 h-4 w-4 -translate-y-1/2 text-fg-muted" />
+              <input
+                ref={searchRef}
+                value={query}
+                onChange={(e) => setQuery(e.target.value)}
+                placeholder="Search by client, ECR, vehicle or product"
+                aria-label="Search the queue"
+                className={`${inputCls} w-80 ps-10`}
+              />
+            </div>
+
+            <select
+              aria-label="Location"
+              className={inputCls}
+              value={locationId}
+              onChange={(e) => setLocationId(Number(e.target.value))}
+            >
+              {s.locations.map((l) => (
+                <option key={l.id} value={l.id}>
+                  {l.name}
+                </option>
+              ))}
+            </select>
+
+            <div className="flex divide-x divide-line border border-line">
+              {(['lanes', 'table'] as const).map((v) => (
+                <button
+                  key={v}
+                  type="button"
+                  onClick={() => setView(v)}
+                  aria-pressed={view === v}
+                  className={`px-4 py-2 text-base ${
+                    view === v
+                      ? 'bg-surface-high font-semibold text-fg'
+                      : 'bg-surface text-fg hover:bg-surface-high'
+                  }`}
+                >
+                  {v === 'lanes' ? 'Columns' : 'One list'}
+                </button>
+              ))}
+            </div>
+          </div>
+        </div>
+
+        <div className="mt-3 flex flex-wrap gap-2">
+          <Tile label="Open in the queue" value={queueTotals.open} sub="placed + filled + assigned" />
+          <Tile label="Cylinders to move" value={queueTotals.cylinders} sub="staged or requested" />
+          <Tile
+            label="Value in the queue"
+            value={<Money value={queueTotals.value} />}
+            sub="at loaded quantities"
+          />
+          <Tile
+            label="Dispatched today"
+            value={queueTotals.dispatched}
+            sub={`${queueTotals.dispatchedCyl} cylinders on the road`}
+          />
+          <Tile
+            label="Acting as"
+            value={<span className="text-lg">{me.name}</span>}
+            sub={`${me.role} · every action is audited`}
+          />
+        </div>
+      </header>
+
+      {/* ── Body ─────────────────────────────────────────────────────────── */}
+      <div className="min-h-0 flex-1 overflow-y-auto px-4 py-3">
+        <EcrCounters locationId={locationId} highlightKey={highlightKey} />
+
+        {view === 'lanes' ? (
+          <div className="mt-3 grid gap-3 lg:grid-cols-2 xl:grid-cols-4">
+            {LANES.map((lane) => {
+              const list = byLane[lane.status] ?? [];
+              return (
+                <section key={lane.status} className="flex min-h-0 flex-col border border-line bg-surface">
+                  <header className="border-b border-line px-4 py-3">
+                    <div className="flex items-baseline gap-2">
+                      <h2 className="text-lg font-semibold text-fg">{t(lane.title)}</h2>
+                      <span className="font-mono text-lg tabular-nums text-fg">{list.length}</span>
+                    </div>
+                    <p className="truncate text-base text-fg-muted">{t(lane.hint)}</p>
+                  </header>
+                  <div className="flex flex-col gap-3 p-3">
+                    {list.length === 0 ? (
+                      <p className="border border-line px-3 py-6 text-center text-base text-fg-muted">
+                        {query ? 'Nothing here matches the search.' : 'Lane clear.'}
+                      </p>
+                    ) : (
+                      list.map((o) => (
+                        <LaneCard
+                          key={o.id}
+                          order={o}
+                          lane={lane}
+                          selected={selectedId === o.id}
+                          onSelect={() => setSelectedId(o.id)}
+                          onVerb={() => openVerb(o, lane.verb)}
+                          onCancel={() => openVerb(o, 'cancel')}
+                        />
+                      ))
+                    )}
+                  </div>
+                </section>
+              );
+            })}
+          </div>
+        ) : (
+          <div className="mt-3">
+            <OrderTable
+              orders={flat}
+              dense
+              selectedId={selectedId}
+              onSelect={(o) => {
+                setSelectedId(o.id);
+                setDetailOpen(true);
+              }}
+              columns={['status', 'ecr', 'client', 'origin', 'lines', 'cylinders', 'value', 'vehicle', 'driver', 'age']}
+              empty="No orders at this location match the search."
+              rowActions={(o) => (
+                <div className="flex justify-end gap-2">
+                  {o.status === 'PLACED' && (
+                    <Btn kind="secondary" onClick={() => openVerb(o, 'fill')}>
+                      Fill
+                    </Btn>
+                  )}
+                  {o.status === 'FILLED' && (
+                    <Btn kind="secondary" onClick={() => openVerb(o, 'assign')}>
+                      Assign
+                    </Btn>
+                  )}
+                  {o.status === 'ASSIGNED' && (
+                    <Btn kind="primary" onClick={() => openVerb(o, 'dispatch')}>
+                      Dispatch
+                    </Btn>
+                  )}
+                </div>
+              )}
+            />
+          </div>
+        )}
+      </div>
+
+      {/* ── Status bar ───────────────────────────────────────────────────── */}
+      <footer className="flex flex-none flex-wrap items-center gap-x-4 gap-y-1 border-t border-line bg-surface px-4 py-2">
+        <span className="flex items-center gap-2 text-base text-fg-muted">
+          <Clipboard className="h-4 w-4" />
+          {selected ? (
+            <>
+              Selected <span className="font-mono text-fg-muted">#{selected.id}</span>{' '}
+              {select.clientName(s, selected.clientId)} · {STATUS_LABEL[selected.status]}
+            </>
+          ) : (
+            <>Nothing selected — click a card or press ↓</>
+          )}
+        </span>
+        <span className="ms-auto flex flex-wrap items-center gap-3">
+          <Shortcut k="/">search</Shortcut>
+          <Shortcut k="↑ ↓">move</Shortcut>
+          <Shortcut k="↵">open</Shortcut>
+        </span>
+      </footer>
+
+      {/* ── Overlays ─────────────────────────────────────────────────────── */}
+      {detailOpen && selected && (
+        <OrderDetail
+          orderId={selected.id}
+          onClose={() => setDetailOpen(false)}
+          actions={
+            <div className="flex items-center gap-2">
+              <span className="me-auto text-base text-fg-muted">
+                {selected.status === 'ASSIGNED'
+                  ? 'Next step allocates the ECR permanently.'
+                  : 'Each step is checked against the state machine and your role.'}
+              </span>
+              {selected.status === 'PLACED' && (
+                <Btn kind="primary" onClick={() => openVerb(selected, 'fill')}>
+                  Review &amp; fill
+                </Btn>
+              )}
+              {selected.status === 'FILLED' && (
+                <Btn kind="primary" onClick={() => openVerb(selected, 'assign')}>
+                  Assign vehicle
+                </Btn>
+              )}
+              {selected.status === 'ASSIGNED' && (
+                <Btn kind="primary" onClick={() => openVerb(selected, 'dispatch')}>
+                  <Truck className="h-3.5 w-3.5" /> Confirm dispatch &amp; allocate ECR
+                </Btn>
+              )}
+              {canTransition(selected.status, 'CANCELLED') && (
+                <Btn kind="danger" onClick={() => openVerb(selected, 'cancel')}>
+                  Cancel
+                </Btn>
+              )}
+            </div>
+          }
+        />
+      )}
+
+      {fillFor != null && <FillModal key={`fill-${fillFor}`} orderId={fillFor} onClose={() => setFillFor(null)} />}
+      {assignFor != null && (
+        <AssignModal key={`assign-${assignFor}`} orderId={assignFor} onClose={() => setAssignFor(null)} />
+      )}
+      {cancelFor != null && (
+        <CancelModal key={`cancel-${cancelFor}`} orderId={cancelFor} onClose={() => setCancelFor(null)} />
+      )}
+      <DispatchModal
+        orderId={dispatchFor}
+        onClose={() => setDispatchFor(null)}
+        onDispatched={(_ecr, id) => setSelectedId(id)}
+      />
+    </div>
+  );
+}
+
+export default ClerkQueue;

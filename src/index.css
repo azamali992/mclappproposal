@@ -1,0 +1,293 @@
+@import url('https://fonts.googleapis.com/css2?family=Noto+Nastaliq+Urdu:wght@400;500;600;700&display=swap');
+
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+/* ─── MCL Delivery — base layer ──────────────────────────────────────────────
+   Plain white utilitarian UI. White page, white panels, 1px grey rules, black
+   text, one blue for actions. No shadows, no gradients, no tints, no
+   decoration. CSS custom properties mirror the Tailwind tokens for the few
+   places that need raw CSS (canvas, SVG, scrollbars).
+
+   RTL / Urdu hooks (unchanged, and load-bearing):
+     .font-urdu          font stack + line-height 2 (Nastaliq needs the room)
+     [lang='ur']         same, applied automatically to any subtree
+     [dir='rtl']         flips .knob-shift-*, .animate-slide-left
+   Prefer logical utilities in new code: ps-/pe-, ms-/me-, start-/end-,
+   border-s/border-e, text-start/text-end. They need no override.
+   ───────────────────────────────────────────────────────────────────────── */
+
+:root {
+  color-scheme: light;
+
+  /* surfaces — white, plus one fill grey and one interaction grey */
+  --app: #ffffff;
+  --surface: #ffffff;
+  --surface-raised: #f7f7f7;
+  --surface-high: #eeeeee;
+  --surface-sunken: #f7f7f7;
+
+  /* lines — two values */
+  --line: #c6c6c6;
+  --line-soft: #c6c6c6;
+  --line-strong: #767676;
+
+  /* foreground — two tiers */
+  --fg: #111111;
+  --fg-muted: #555555;
+  --fg-dim: #555555;
+  --fg-inverse: #ffffff;
+
+  /* one accent + functional status colours */
+  --accent: #1a56db;
+  --accent-hover: #1443ae;
+  --success: #146b3a;
+  --warn: #8a5300;
+  --danger: #b3261e;
+  --info: #1a56db;
+
+  --scrim: rgba(0, 0, 0, 0.4);
+
+  /* motion */
+  --ease-entrance: cubic-bezier(0.16, 1, 0.3, 1);
+  --ease-exit: cubic-bezier(0.4, 0, 1, 1);
+  --dur-fast: 120ms;
+  --dur: 160ms;
+  --dur-slow: 240ms;
+}
+
+@layer base {
+  * {
+    border-color: theme('colors.line.DEFAULT');
+  }
+
+  html,
+  body,
+  #root {
+    height: 100%;
+  }
+
+  html {
+    -webkit-text-size-adjust: 100%;
+    text-size-adjust: 100%;
+  }
+
+  body {
+    margin: 0;
+    background-color: theme('colors.app');
+    color: theme('colors.fg.DEFAULT');
+    font-family: theme('fontFamily.sans');
+    /* 16px body. The client asked for "easy to use"; 14px was not. */
+    font-size: theme('fontSize.base[0]');
+    line-height: 1.5rem;
+    -webkit-font-smoothing: antialiased;
+    -moz-osx-font-smoothing: grayscale;
+  }
+
+  /* Numbers app: every digit aligns. Functional, not stylistic. */
+  table,
+  input[type='number'],
+  [data-num] {
+    font-variant-numeric: tabular-nums;
+    font-feature-settings: 'tnum' 1;
+  }
+
+  h1,
+  h2,
+  h3,
+  h4,
+  h5,
+  h6 {
+    font-weight: 600;
+    letter-spacing: normal;
+    margin: 0;
+  }
+
+  p {
+    margin: 0;
+  }
+
+  /* ── Urdu / Nastaliq ──────────────────────────────────────────────────────
+     Nastaliq is a cascading script: glyphs descend steeply and diacritics sit
+     well above the baseline, so Latin leading makes consecutive lines collide.
+     line-height: 2 is the minimum that keeps two stacked lines clear. The base
+     size moved 14px -> 16px, which only ADDS room (28px -> 32px of leading),
+     so the rule still holds with margin.
+     Also: no negative tracking, no uppercase, no tabular figures. */
+  /* !important is load-bearing here, not laziness. Tailwind's fontSize tokens
+     each ship a line-height, so `.text-base` lands in the utilities layer at the
+     same specificity (0,1,0) as this rule and wins on order — leaving Nastaliq
+     at ~1.5x, where the diacritics collide. The heading rule below carries
+     !important too, so its higher specificity still beats this one. */
+  [lang='ur'],
+  [lang='ur-PK'],
+  [lang='ur-IN'] {
+    font-family: theme('fontFamily.urdu');
+    line-height: 2 !important;
+    letter-spacing: normal;
+    font-feature-settings: normal;
+    font-variant-numeric: normal;
+    text-rendering: auto;
+  }
+
+  [lang='ur'] h1,
+  [lang='ur'] h2,
+  [lang='ur'] h3,
+  [lang='ur'] h4,
+  [lang='ur'] h5,
+  [lang='ur'] h6 {
+    letter-spacing: normal;
+    line-height: 1.85 !important;
+  }
+
+  /* Uppercase + wide tracking are Latin-only treatments. The `.eyebrow` class
+     no longer applies either, but the override stays so any screen-level
+     uppercase inside Urdu copy is still neutralised. */
+  [lang='ur'] .eyebrow,
+  [dir='rtl'] [lang='ur'] .eyebrow {
+    text-transform: none;
+    letter-spacing: normal;
+    line-height: 1.9;
+  }
+
+  /* One focus treatment, everywhere, unmistakable: a 2px black ring on a 2px
+     white gap, so it is visible on white, on the grey fill, and on a blue
+     button alike. Colour-independent by construction. */
+  :focus-visible {
+    outline: 2px solid theme('colors.fg.DEFAULT');
+    outline-offset: 2px;
+    border-radius: theme('borderRadius.sm');
+  }
+  :focus:not(:focus-visible) {
+    outline: none;
+  }
+
+  ::placeholder {
+    color: theme('colors.fg.muted');
+    opacity: 1;
+  }
+
+  /* Plain grey scrollbars. */
+  * {
+    scrollbar-width: thin;
+    scrollbar-color: theme('colors.line.DEFAULT') transparent;
+  }
+  ::-webkit-scrollbar {
+    width: 12px;
+    height: 12px;
+  }
+  ::-webkit-scrollbar-track {
+    background: transparent;
+  }
+  ::-webkit-scrollbar-thumb {
+    background: theme('colors.line.DEFAULT');
+    border: 3px solid transparent;
+    background-clip: content-box;
+  }
+  ::-webkit-scrollbar-thumb:hover {
+    background: theme('colors.line.strong');
+    background-clip: content-box;
+  }
+
+  /* Remove number spinners — NumberStepper owns increment affordance. */
+  input[type='number']::-webkit-outer-spin-button,
+  input[type='number']::-webkit-inner-spin-button {
+    -webkit-appearance: none;
+    margin: 0;
+  }
+  input[type='number'] {
+    -moz-appearance: textfield;
+    appearance: textfield;
+  }
+
+  /* Autofill must not repaint the control chrome. */
+  input:-webkit-autofill,
+  input:-webkit-autofill:hover,
+  input:-webkit-autofill:focus,
+  textarea:-webkit-autofill,
+  select:-webkit-autofill {
+    -webkit-text-fill-color: theme('colors.fg.DEFAULT');
+    -webkit-box-shadow: 0 0 0 1000px theme('colors.surface.DEFAULT') inset;
+    caret-color: theme('colors.fg.DEFAULT');
+    transition: background-color 9999s ease-out;
+  }
+}
+
+@layer components {
+  /* Tabular figures. Functional: columns of numbers must align. */
+  .num {
+    font-variant-numeric: tabular-nums;
+    font-feature-settings: 'tnum' 1;
+  }
+
+  /* Small field/column label. Was an uppercase, wide-tracked "eyebrow"
+     treatment; it is now just small bold grey text at a readable size.
+     Sentence case, normal tracking — the label reads as a label because of
+     where it sits, not because it shouts. */
+  .eyebrow {
+    font-size: theme('fontSize.sm[0]');
+    line-height: 1.25rem;
+    letter-spacing: normal;
+    text-transform: none;
+    font-weight: 600;
+    color: theme('colors.fg.muted');
+  }
+
+  /* Urdu utility. The font-family comes from the Tailwind `font-urdu`
+     utility; this adds the leading Nastaliq needs. `leading-*` still wins. */
+  .font-urdu {
+    line-height: 2;
+    letter-spacing: normal;
+    font-feature-settings: normal;
+  }
+
+  /* Toggle knob travel. Transform-only, so it flips with a class rather than
+     an animated layout property. */
+  [dir='rtl'] .knob-shift-md {
+    transform: translate3d(-1rem, 0, 0);
+  }
+  [dir='rtl'] .knob-shift-lg {
+    transform: translate3d(-1.25rem, 0, 0);
+  }
+
+  /* Hide scrollbars where the chrome should read as an app, not a page. */
+  .no-scrollbar {
+    scrollbar-width: none;
+  }
+  .no-scrollbar::-webkit-scrollbar {
+    display: none;
+  }
+}
+
+/* The drawer enters from the inline end. Under RTL that is the left edge, so
+   swap the keyframe rather than the layout. */
+[dir='rtl'] .animate-slide-left {
+  animation-name: slide-right;
+}
+
+/* Declared here as well as in the Tailwind config: Tailwind only emits a
+   @keyframes block for an animation utility it actually sees in the content
+   scan, and `animate-slide-right` is only ever applied by the [dir='rtl']
+   rule above — which the scanner cannot see. */
+@keyframes slide-right {
+  from {
+    transform: translate3d(-100%, 0, 0);
+  }
+  to {
+    transform: translate3d(0, 0, 0);
+  }
+}
+
+/* Reduced motion: real fallback — state changes land instantly, nothing
+   animates in place at 1ms. */
+@media (prefers-reduced-motion: reduce) {
+  *,
+  *::before,
+  *::after {
+    animation-duration: 0.01ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.01ms !important;
+    scroll-behavior: auto !important;
+  }
+}
