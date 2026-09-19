@@ -9,9 +9,10 @@
 
 import { useMemo, useState } from 'react';
 import type { Order } from '../../../core/types';
-import { api, useStore, useCurrentUser, select, RuleError } from '../../../core/store';
+import { api, useStore, useCurrentUser, select, rateFor, RuleError } from '../../../core/store';
 import { Money, NumberStepper } from '../../../ui/primitives';
-import { Plus, X, Alert, Clipboard, Cylinder } from '../../../ui/icons';
+import { Plus, X, Alert, Clipboard, Cylinder, Truck, Box } from '../../../ui/icons';
+import { useT } from '../../../i18n';
 import { TONE_CLASS, useRuleToast } from '../shared/OrderTable';
 
 const asNumber = (v: any): number => {
@@ -40,10 +41,12 @@ export interface NewOrderFormProps {
 }
 
 export function NewOrderForm({ onPlaced, onCancel, defaultClientId, className = '' }: NewOrderFormProps) {
+  const t = useT();
   const s = useStore((st) => st);
   const me = useCurrentUser();
   const toast = useRuleToast();
 
+  const [fulfilment, setFulfilment] = useState<'delivery' | 'collection'>('delivery');
   const [clientId, setClientId] = useState<number>(defaultClientId ?? s.clients[0]?.id ?? 0);
   const [locationId, setLocationId] = useState<number>(me.locationId ?? s.locations[0]?.id ?? 1);
   const [bookTypeId, setBookTypeId] = useState<number>(s.bookTypes[0]?.id ?? 1);
@@ -62,19 +65,26 @@ export function NewOrderForm({ onPlaced, onCancel, defaultClientId, className = 
     [s.products, bookTypeId],
   );
 
+  // Prices follow the chosen rate card. `rateFor` is the store's own function,
+  // the same one `api.placeOrder` uses to snapshot the line at order time — so
+  // what the client is quoted here is exactly what lands on the order.
+  const collecting = fulfilment === 'collection';
+
   const totals = useMemo(() => {
     let value = 0;
+    let deliveredValue = 0;
     let cylinders = 0;
     let deposits = 0;
     for (const l of lines) {
       const p = s.products.find((x) => x.id === l.productId);
       if (!p || l.qty <= 0) continue;
-      value += p.unitPrice * l.qty;
+      value += rateFor(p, fulfilment) * l.qty;
+      deliveredValue += p.unitPrice * l.qty;
       cylinders += l.qty;
       deposits += p.depositPerCylinder * l.qty;
     }
-    return { value, cylinders, deposits };
-  }, [lines, s.products]);
+    return { value, deliveredValue, saving: deliveredValue - value, cylinders, deposits };
+  }, [lines, s.products, fulfilment]);
 
   const headroom = (client?.creditLimit ?? 0) - (client?.outstanding ?? 0);
   const overLimit = client?.paymentTerms === 'credit' && totals.value > headroom;
@@ -95,6 +105,7 @@ export function NewOrderForm({ onPlaced, onCancel, defaultClientId, className = 
         clientId,
         locationId,
         bookTypeId,
+        fulfilment,
         requestedDate: new Date(`${requestedDate}T09:00:00`).toISOString(),
         notes: notes.trim() || undefined,
         lines: lines
@@ -102,9 +113,23 @@ export function NewOrderForm({ onPlaced, onCancel, defaultClientId, className = 
           .map((l) => ({ productId: l.productId, qtyOrdered: l.qty })),
       });
       toast(
-        `Order #${order.id} placed for ${client?.name} — ${totals.cylinders} cylinders. It is now at the top of the warehouse queue.`,
+        collecting
+          ? t(
+              'Order #{id} placed for {client} — {n} cylinders to collect from the plant, priced off the ex-delivery card ({saving} less than delivered).',
+              {
+                id: order.id,
+                client: client?.name ?? '',
+                n: totals.cylinders,
+                saving: `Rs ${totals.saving.toLocaleString('en-PK')}`,
+              },
+            )
+          : t('Order #{id} placed for {client} — {n} cylinders. It is now at the top of the warehouse queue.', {
+              id: order.id,
+              client: client?.name ?? '',
+              n: totals.cylinders,
+            }),
         'success',
-        'Order placed',
+        t('Order placed'),
       );
       setLines([{ key: nextKey, productId: bookProducts[0]?.id ?? 0, qty: 6 }]);
       setNextKey((k) => k + 1);
@@ -128,7 +153,7 @@ export function NewOrderForm({ onPlaced, onCancel, defaultClientId, className = 
       <header className="flex-none border-b border-line bg-surface px-4 py-4">
         <div className="flex items-center gap-2">
           <Clipboard className="h-5 w-5 text-fg-muted" />
-          <h2 className="text-xl font-semibold text-fg">New order</h2>
+          <h2 className="text-xl font-semibold text-fg">{t('New order')}</h2>
           <span className="ms-auto text-base text-fg-muted">
             Taken by {me.name} · origin <span className="text-fg-muted">sales desk</span>
           </span>
@@ -213,16 +238,78 @@ export function NewOrderForm({ onPlaced, onCancel, defaultClientId, className = 
               </>
             ) : (
               <p className="mt-3 text-base leading-relaxed text-fg-muted">
-                Cash client — the driver collects{' '}
+                {collecting ? 'Cash client — the counter takes ' : 'Cash client — the driver collects '}
                 <span className="font-mono tabular-nums text-fg">
                   <Money value={totals.value} />
                 </span>{' '}
-                at the door and hands it to the gate cashier. The Oracle payload carries a matching
+                {collecting
+                  ? 'when their van arrives, and it goes to the gate cashier with the rest of the day’s cash.'
+                  : 'at the door and hands it to the gate cashier.'}{' '}
+                The Oracle payload carries a matching
                 <span className="font-mono"> cash_receipt</span>, and only a matched count posts.
               </p>
             )}
           </div>
         )}
+
+        {/* ── Delivery or collection ──────────────────────────────────────── */}
+        <fieldset className="mt-5">
+          <legend className={labelCls}>{t('How does the client get the cylinders?')}</legend>
+          <div className="grid gap-3 sm:grid-cols-2">
+            {([
+              {
+                key: 'delivery' as const,
+                icon: <Truck className="h-5 w-5 text-fg-muted" />,
+                title: t('Deliver to client'),
+                body: t('MCL loads a vehicle and runs it out on a route. Delivered rate — transport included.'),
+              },
+              {
+                key: 'collection' as const,
+                icon: <Box className="h-5 w-5 text-fg-muted" />,
+                title: t('Client collects from plant'),
+                body: t('The client sends their own van. No vehicle, no route, no driver — and the ex-delivery rate applies.'),
+              },
+            ]).map((opt) => {
+              const on = fulfilment === opt.key;
+              return (
+                <label
+                  key={opt.key}
+                  className={`flex min-h-12 cursor-pointer gap-3 border px-4 py-3 ${
+                    on ? 'border-line bg-surface-high' : 'border-line bg-surface hover:bg-surface-high'
+                  }`}
+                >
+                  <input
+                    type="radio"
+                    name="fulfilment"
+                    className="mt-1 h-4 w-4 flex-none accent-accent"
+                    checked={on}
+                    onChange={() => setFulfilment(opt.key)}
+                  />
+                  <span className="min-w-0">
+                    <span className="flex items-center gap-2">
+                      {opt.icon}
+                      <span className={`text-base ${on ? 'font-semibold text-fg' : 'text-fg'}`}>
+                        {opt.title}
+                      </span>
+                    </span>
+                    <span className="mt-1 block text-base leading-relaxed text-fg-muted">{opt.body}</span>
+                  </span>
+                </label>
+              );
+            })}
+          </div>
+          {collecting && (
+            <div className={`mt-3 flex gap-2 border px-3 py-3 text-base ${TONE_CLASS.info}`}>
+              <Box className="mt-0.5 h-4 w-4 flex-none" />
+              <span className="leading-relaxed">
+                <span className="font-semibold">{t('Collection rate — transport not included')}.</span>{' '}
+                {t(
+                  'Every line below is priced off the separate ex-delivery rate card, and the prices are copied onto the order when it is placed. No vehicle, route or driver is assigned; the clerk releases the cylinders at the counter.',
+                )}
+              </span>
+            </div>
+          )}
+        </fieldset>
 
         {/* ── Fulfilment ──────────────────────────────────────────────────── */}
         <div className="mt-5 grid grid-cols-3 gap-4">
@@ -275,9 +362,11 @@ export function NewOrderForm({ onPlaced, onCancel, defaultClientId, className = 
         {/* ── Lines ───────────────────────────────────────────────────────── */}
         <div className="mt-6">
           <div className="mb-2 flex items-baseline justify-between">
-            <h3 className="text-lg font-semibold text-fg">What they are ordering</h3>
+            <h3 className="text-lg font-semibold text-fg">{t('What they are ordering')}</h3>
             <span className="text-base text-fg-muted">
-              {bookProducts.length} product(s) in this book
+              {collecting
+                ? t('Collection rate — transport not included')
+                : t('Delivered rate — transport included')}
             </span>
           </div>
 
@@ -285,16 +374,23 @@ export function NewOrderForm({ onPlaced, onCancel, defaultClientId, className = 
             <table className="w-full border-collapse text-base">
               <thead>
                 <tr className="border-b border-line bg-surface text-base text-fg">
-                  <th className="px-3 py-3 text-left font-semibold">Product</th>
-                  <th className="px-3 py-3 text-right font-semibold">Unit price</th>
-                  <th className="px-3 py-3 text-center font-semibold">How many</th>
-                  <th className="px-3 py-3 text-right font-semibold">Line total</th>
+                  <th className="px-3 py-3 text-left font-semibold">{t('Product')}</th>
+                  <th className="px-3 py-3 text-right font-semibold">
+                    {collecting ? t('Collection rate') : t('Unit price')}
+                  </th>
+                  {collecting && (
+                    <th className="px-3 py-3 text-right font-semibold">{t('Saving on this line')}</th>
+                  )}
+                  <th className="px-3 py-3 text-center font-semibold">{t('How many')}</th>
+                  <th className="px-3 py-3 text-right font-semibold">{t('Line total')}</th>
                   <th className="w-10" />
                 </tr>
               </thead>
               <tbody>
                 {lines.map((l) => {
                   const p = s.products.find((x) => x.id === l.productId);
+                  const rate = p ? rateFor(p, fulfilment) : 0;
+                  const perCylSaving = p ? p.unitPrice - rate : 0;
                   return (
                     <tr key={l.key} className="border-t border-line">
                       <td className="px-3 py-3">
@@ -311,9 +407,28 @@ export function NewOrderForm({ onPlaced, onCancel, defaultClientId, className = 
                           ))}
                         </select>
                       </td>
-                      <td className="px-3 py-3 text-right font-mono tabular-nums text-fg-muted">
-                        {p ? <Money value={p.unitPrice} /> : '—'}
+                      <td className="px-3 py-3 text-right font-mono tabular-nums text-fg">
+                        {p ? <Money value={rate} /> : '—'}
+                        {p && collecting && (
+                          <span className="block text-base text-fg-muted line-through">
+                            <Money value={p.unitPrice} />
+                          </span>
+                        )}
                       </td>
+                      {collecting && (
+                        <td className="px-3 py-3 text-right font-mono tabular-nums text-success-fg">
+                          {p ? (
+                            <>
+                              <Money value={perCylSaving * l.qty} />
+                              <span className="block text-base text-fg-muted">
+                                <Money value={perCylSaving} /> {t('per cylinder')}
+                              </span>
+                            </>
+                          ) : (
+                            '—'
+                          )}
+                        </td>
+                      )}
                       <td className="px-3 py-3">
                         <div className="flex justify-center">
                           <NumberStepper
@@ -325,7 +440,7 @@ export function NewOrderForm({ onPlaced, onCancel, defaultClientId, className = 
                         </div>
                       </td>
                       <td className="px-3 py-3 text-right font-mono tabular-nums text-fg">
-                        {p ? <Money value={p.unitPrice * l.qty} /> : '—'}
+                        {p ? <Money value={rate * l.qty} /> : '—'}
                       </td>
                       <td className="px-2 py-3 text-right">
                         <button
@@ -350,12 +465,12 @@ export function NewOrderForm({ onPlaced, onCancel, defaultClientId, className = 
             onClick={addLine}
             className="mt-3 inline-flex items-center gap-2 border border-line px-4 py-2 text-base font-medium text-fg hover:bg-surface-high focus:outline-none focus-visible:ring-1 focus-visible:ring-accent"
           >
-            <Plus className="h-4 w-4" /> Add another product
+            <Plus className="h-4 w-4" /> {t('Add another product')}
           </button>
         </div>
 
         <label className="mt-6 block">
-          <span className={labelCls}>Notes for the warehouse</span>
+          <span className={labelCls}>{t('Notes for the warehouse')}</span>
           <textarea
             rows={2}
             value={notes}
@@ -377,13 +492,28 @@ export function NewOrderForm({ onPlaced, onCancel, defaultClientId, className = 
             </div>
           </div>
           <div>
-            <div className="text-base text-fg-muted">Order value</div>
+            <div className="text-base text-fg-muted">
+              {collecting ? t('Order value at the collection rate') : t('Order value')}
+            </div>
             <div className="font-mono text-xl tabular-nums text-fg">
               <Money value={totals.value} />
             </div>
+            {collecting && (
+              <div className="text-base text-fg-muted line-through">
+                <Money value={totals.deliveredValue} />
+              </div>
+            )}
           </div>
+          {collecting && (
+            <div>
+              <div className="text-base text-fg-muted">{t('Saving — transport not charged')}</div>
+              <div className="font-mono text-xl tabular-nums text-success-fg">
+                <Money value={totals.saving} />
+              </div>
+            </div>
+          )}
           <div>
-            <div className="text-base text-fg-muted">Deposit held on cylinders</div>
+            <div className="text-base text-fg-muted">{t('Deposit held on cylinders')}</div>
             <div className="font-mono text-xl tabular-nums text-fg-muted">
               <Money value={totals.deposits} />
             </div>
@@ -405,13 +535,18 @@ export function NewOrderForm({ onPlaced, onCancel, defaultClientId, className = 
               onClick={submit}
               className="inline-flex items-center gap-2 bg-accent px-5 py-2.5 text-base font-semibold text-accent-fg hover:bg-accent-hover active:bg-accent-press disabled:opacity-50 focus:outline-none focus-visible:ring-2 focus-visible:ring-accent"
             >
-              <Plus className="h-5 w-5" /> Place order
+              <Plus className="h-5 w-5" /> {t('Place order')}
             </button>
           </div>
         </div>
         <p className="mt-3 text-base text-fg-muted">
-          Placing creates the order at <span className="text-fg-muted">Placed</span> and drops it straight
-          into the warehouse queue. No ECR is issued until the clerk confirms dispatch.
+          {collecting
+            ? t(
+                'Placing creates the order at Placed and drops it into the warehouse queue as a collection. No vehicle is assigned and no ECR is issued until the clerk releases it at the counter.',
+              )
+            : t(
+                'Placing creates the order at Placed and drops it straight into the warehouse queue. No ECR is issued until the clerk confirms dispatch.',
+              )}
         </p>
       </footer>
     </div>

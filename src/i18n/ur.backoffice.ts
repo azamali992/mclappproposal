@@ -130,4 +130,171 @@ export const urBackoffice: Dict = {
   // ── Audit trail ──────────────────────────────────────────────────────────
   'Append-only. Every state change carries the actor, their role and the exact transition — no row is ever edited or deleted.':
     'صرف اضافہ۔ ہر تبدیلی کے ساتھ کارکن، اس کا عہدہ اور عین مرحلہ درج ہوتا ہے — کوئی سطر نہ بدلی جاتی ہے نہ حذف کی جاتی ہے۔',
+
+  // ── Self-collection (clerk + sales) ──────────────────────────────────────
+  // "Collection" here always means the client's own van coming to the plant,
+  // never a cash collection — hence خود اٹھانا rather than وصولی.
+  'How does the client get the cylinders?': 'گاہک سلنڈر کیسے حاصل کرے گا؟',
+  'Deliver to client': 'گاہک تک پہنچائیں',
+  'MCL loads a vehicle and runs it out on a route. Delivered rate — transport included.':
+    'ایم سی ایل گاڑی لوڈ کر کے روٹ پر بھیجتی ہے۔ ڈیلیوری ریٹ — ٹرانسپورٹ شامل ہے۔',
+  'Client collects from plant': 'گاہک پلانٹ سے خود لے جائے گا',
+  'The client sends their own van. No vehicle, no route, no driver — and the ex-delivery rate applies.':
+    'گاہک اپنی گاڑی بھیجتا ہے۔ نہ گاڑی، نہ روٹ، نہ ڈرائیور — اور ٹرانسپورٹ کے بغیر والا ریٹ لاگو ہوتا ہے۔',
+  'Client collects': 'گاہک خود لے جائے گا',
+  'Collection rate': 'خود اٹھانے کا ریٹ',
+  'Collection rate — transport not included': 'خود اٹھانے کا ریٹ — ٹرانسپورٹ شامل نہیں',
+  'Delivered rate — transport included': 'ڈیلیوری ریٹ — ٹرانسپورٹ شامل ہے',
+  'Saving on this line': 'اس سطر پر بچت',
+  'Saving — transport not charged': 'بچت — ٹرانسپورٹ کا خرچ نہیں لیا گیا',
+  'Order value at the collection rate': 'خود اٹھانے کے ریٹ پر آرڈر کی مالیت',
+  'Every line below is priced off the separate ex-delivery rate card, and the prices are copied onto the order when it is placed. No vehicle, route or driver is assigned; the clerk releases the cylinders at the counter.':
+    'نیچے ہر سطر کی قیمت الگ ایکس ڈیلیوری ریٹ لسٹ سے لی گئی ہے، اور آرڈر درج ہوتے ہی یہ قیمتیں آرڈر پر محفوظ ہو جاتی ہیں۔ کوئی گاڑی، روٹ یا ڈرائیور مقرر نہیں ہوتا؛ کلرک کاؤنٹر پر سلنڈر جاری کرتا ہے۔',
+  'Placing creates the order at Placed and drops it into the warehouse queue as a collection. No vehicle is assigned and no ECR is issued until the clerk releases it at the counter.':
+    'آرڈر درج شدہ حالت میں بنتا ہے اور خود اٹھانے والے کام کے طور پر گودام کی قطار میں چلا جاتا ہے۔ کوئی گاڑی مقرر نہیں ہوتی اور ای سی آر اس وقت تک جاری نہیں ہوتا جب تک کلرک کاؤنٹر پر اسے جاری نہ کرے۔',
+  'Placing creates the order at Placed and drops it straight into the warehouse queue. No ECR is issued until the clerk confirms dispatch.':
+    'آرڈر درج شدہ حالت میں بنتا ہے اور سیدھا گودام کی قطار میں چلا جاتا ہے۔ ای سی آر اس وقت تک جاری نہیں ہوتا جب تک کلرک روانگی کی تصدیق نہ کرے۔',
+  'Order #{id} placed for {client} — {n} cylinders to collect from the plant, priced off the ex-delivery card ({saving} less than delivered).':
+    'آرڈر #{id} برائے {client} درج ہو گیا — {n} سلنڈر پلانٹ سے خود اٹھائے جائیں گے، ایکس ڈیلیوری ریٹ پر (ڈیلیوری کے مقابلے میں {saving} کم)۔',
+  'Order #{id} placed for {client} — {n} cylinders. It is now at the top of the warehouse queue.':
+    'آرڈر #{id} برائے {client} درج ہو گیا — {n} سلنڈر۔ یہ اب گودام کی قطار میں سب سے اوپر ہے۔',
+
+  // ── Clerk queue — the collection lane ────────────────────────────────────
+  'All work': 'تمام کام',
+  Deliveries: 'ڈیلیوریاں',
+  Collections: 'خود اٹھانے والے',
+  'Self-collection counter': 'خود اٹھانے کا کاؤنٹر',
+  'The client’s own van comes for these — no vehicle, no route, no driver, and the ex-delivery rate.':
+    'ان کے لیے گاہک کی اپنی گاڑی آتی ہے — نہ گاڑی، نہ روٹ، نہ ڈرائیور، اور ایکس ڈیلیوری ریٹ۔',
+  '{n} released and waiting for someone to turn up': '{n} جاری شدہ — کسی کے آنے کے منتظر',
+  'No self-collections at this location today.': 'آج اس مقام پر خود اٹھانے والا کوئی آرڈر نہیں۔',
+  'No self-collections match the search.': 'تلاش کے مطابق خود اٹھانے والا کوئی آرڈر نہیں۔',
+  'Waiting for the client’s van': 'گاہک کی گاڑی کے منتظر',
+  'How it goes out': 'کیسے باہر جائے گا',
+
+  // ── Release for collection (the ECR moment, shared with dispatch) ────────
+  'Release for collection': 'اٹھانے کے لیے جاری کریں',
+  'Release for collection and allocate the ECR': 'اٹھانے کے لیے جاری کریں اور ای سی آر جاری کریں',
+  'Released for collection': 'اٹھانے کے لیے جاری کر دیا گیا',
+  'Released — ECR allocated': 'جاری کر دیا گیا — ای سی آر مختص',
+  Released: 'جاری شدہ',
+  'Release blocked': 'اجرا روک دیا گیا',
+  'Dispatch blocked': 'روانگی روک دی گئی',
+  'Confirm dispatch': 'روانگی کی تصدیق کریں',
+  'Dispatched — ECR allocated': 'روانہ — ای سی آر مختص',
+  'Confirming issues the next number from this book. Review it first.':
+    'تصدیق کرنے پر اس بک کا اگلا نمبر جاری ہو جائے گا۔ پہلے اسے دیکھ لیں۔',
+  'The next number in this book': 'اس بک کا اگلا نمبر',
+  'The number now on this delivery': 'اس ڈیلیوری پر موجود نمبر',
+  'The number now on this collection': 'اس خود اٹھانے والے آرڈر پر موجود نمبر',
+  'The number below is now permanently bound to this delivery.':
+    'نیچے دیا گیا نمبر اب مستقل طور پر اس ڈیلیوری سے منسلک ہے۔',
+  'The number below is now permanently bound to this collection.':
+    'نیچے دیا گیا نمبر اب مستقل طور پر اس خود اٹھانے والے آرڈر سے منسلک ہے۔',
+  'The order is now waiting at the counter. Record the collection when the client’s van arrives.':
+    'آرڈر اب کاؤنٹر پر منتظر ہے۔ گاہک کی گاڑی آنے پر وصولی درج کریں۔',
+  'Priced off the ex-delivery rate card — transport is not included, because MCL is not moving it. Wanted {date}.':
+    'قیمت ایکس ڈیلیوری ریٹ لسٹ سے لی گئی ہے — ٹرانسپورٹ شامل نہیں، کیونکہ ایم سی ایل اسے نہیں لے جا رہی۔ مطلوبہ تاریخ {date}۔',
+  'ECR {ecr} allocated to {client} and locked to this order.':
+    'ای سی آر {ecr} {client} کے لیے مختص اور اسی آرڈر سے منسلک کر دیا گیا۔',
+  'ECR {ecr} allocated. {client}’s cylinders are set aside at the counter — record the collection when their van arrives.':
+    'ای سی آر {ecr} مختص ہو گیا۔ {client} کے سلنڈر کاؤنٹر پر الگ رکھ دیے گئے ہیں — ان کی گاڑی آنے پر وصولی درج کریں۔',
+  'None — the client’s own van': 'کوئی نہیں — گاہک کی اپنی گاڑی',
+  'Vehicle, route and driver': 'گاڑی، روٹ اور ڈرائیور',
+  'Vehicle and driver': 'گاڑی اور ڈرائیور',
+  'Cylinders and value': 'سلنڈر اور مالیت',
+  'Allocating…': 'مختص کیا جا رہا ہے…',
+
+  // ── Recording the handover at the counter ───────────────────────────────
+  'Record collection': 'وصولی درج کریں',
+  'Collection recorded': 'وصولی درج ہو گئی',
+  'Collection refused': 'وصولی مسترد',
+  'The client’s own vehicle is at the counter. Record what goes out and who takes it.':
+    'گاہک کی اپنی گاڑی کاؤنٹر پر موجود ہے۔ درج کریں کہ کیا باہر جا رہا ہے اور کون لے جا رہا ہے۔',
+  'What leaves the plant': 'پلانٹ سے کیا جا رہا ہے',
+  'Handed over': 'حوالے کیے گئے',
+  'Empties brought back': 'واپس لائے گئے خالی سلنڈر',
+  'Who collected — name, CNIC or vehicle number': 'کس نے وصول کیا — نام، شناختی کارڈ نمبر یا گاڑی نمبر',
+  'e.g. Imran Shah, CNIC 17301-…, van LES-2290': 'مثلاً عمران شاہ، شناختی کارڈ 17301-…، گاڑی LES-2290',
+  'There is no driver and no signature on a collection — this line is the audit trail.':
+    'خود اٹھانے پر نہ ڈرائیور ہوتا ہے نہ دستخط — یہی سطر آڈٹ ریکارڈ ہے۔',
+  'Cash taken at the counter (PKR)': 'کاؤنٹر پر وصول کی گئی نقدی (روپے)',
+  Expected: 'متوقع',
+  'Credit account — no cash at the counter': 'ادھار اکاؤنٹ — کاؤنٹر پر نقدی نہیں',
+  'The bill posts against {code}. The counter takes nothing.':
+    'بل {code} کے کھاتے میں درج ہوگا۔ کاؤنٹر کچھ وصول نہیں کرتا۔',
+  'What happens when you confirm': 'تصدیق کرنے پر کیا ہوگا',
+  'The order moves to Delivered against ECR {ecr}, recorded by {me} at the counter. The cash joins the gate cashier’s count — and only a confirmed cash reconciliation posts anything to Oracle.':
+    'آرڈر ای سی آر {ecr} کے تحت پہنچا دیا گیا کی حالت میں چلا جاتا ہے، جسے کاؤنٹر پر {me} نے درج کیا۔ نقدی گیٹ کیشیئر کی گنتی میں شامل ہو جاتی ہے — اور اوریکل میں صرف تصدیق شدہ نقد ملان کے بعد ہی کچھ درج ہوتا ہے۔',
+  'The order moves to Delivered against ECR {ecr}, recorded by {me} at the counter. Nothing is collected now; the bill posts to Oracle against the client’s account after reconciliation.':
+    'آرڈر ای سی آر {ecr} کے تحت پہنچا دیا گیا کی حالت میں چلا جاتا ہے، جسے کاؤنٹر پر {me} نے درج کیا۔ ابھی کچھ وصول نہیں ہوتا؛ ملان کے بعد بل گاہک کے کھاتے میں اوریکل میں درج ہو جاتا ہے۔',
+  '{n} cylinder(s) fewer than were released — the bill follows what actually went out.':
+    'جاری کیے گئے سلنڈروں سے {n} کم — بل اسی کے مطابق بنے گا جو واقعی باہر گیا۔',
+  '{n} cylinders out · {b} on the bill': '{n} سلنڈر باہر · بل {b}',
+  'Record who is taking the cylinders before you confirm.':
+    'تصدیق سے پہلے درج کریں کہ سلنڈر کون لے جا رہا ہے۔',
+  'This order has not been released yet. Release it for collection first — that is where the ECR is allocated.':
+    'یہ آرڈر ابھی جاری نہیں ہوا۔ پہلے اسے اٹھانے کے لیے جاری کریں — ای سی آر وہیں مختص ہوتا ہے۔',
+  'Confirm handover': 'حوالگی کی تصدیق کریں',
+  'Not yet': 'ابھی نہیں',
+  'Order #{id} collected by {who}. Rs {cash} taken at the counter — it now goes to the gate cashier.':
+    'آرڈر #{id} {who} نے وصول کر لیا۔ کاؤنٹر پر {cash} روپے وصول ہوئے — یہ اب گیٹ کیشیئر کے پاس جائیں گے۔',
+  'Order #{id} collected by {who}. It posts against {code} — nothing to collect at the counter.':
+    'آرڈر #{id} {who} نے وصول کر لیا۔ یہ {code} کے کھاتے میں درج ہوگا — کاؤنٹر پر کچھ وصول نہیں کرنا۔',
+
+  // ── Cylinder management charges ─────────────────────────────────────────
+  'Cylinder management charges': 'سلنڈر مینجمنٹ چارجز',
+  'Fixed prices from Oracle — pick the work, it goes on the bill':
+    'اوریکل کی مقررہ قیمتیں — کام منتخب کریں، وہ بل پر آ جائے گا',
+  'No cylinder management work on this order yet.': 'اس آرڈر پر ابھی کوئی سلنڈر مینجمنٹ کام نہیں۔',
+  'Add cylinder management work': 'سلنڈر مینجمنٹ کا کام شامل کریں',
+  'Choose the work': 'کام منتخب کریں',
+  '{n} fixed-price items in Oracle': 'اوریکل میں {n} مقررہ قیمت والے آئٹم',
+  'Work done': 'کیا گیا کام',
+  'Fixed price': 'مقررہ قیمت',
+  'On the bill': 'بل پر',
+  'Goes on the bill': 'بل پر آئے گا',
+  'Add to the bill': 'بل میں شامل کریں',
+  'Service work on this order': 'اس آرڈر پر سروس کا کام',
+  'Service work': 'سروس کا کام',
+  Goods: 'مال',
+  'Client’s bill': 'گاہک کا بل',
+  'Per cylinder': 'فی سلنڈر',
+  'Per job': 'فی کام',
+  'per cylinder': 'فی سلنڈر',
+  'How many cylinders': 'کتنے سلنڈر',
+  'How many jobs': 'کتنے کام',
+  'Why the work was needed (optional)': 'یہ کام کیوں ضروری تھا (اختیاری)',
+  'e.g. both valves leaking on return': 'مثلاً واپسی پر دونوں والو لیک کر رہے تھے',
+  'Oracle item': 'اوریکل آئٹم',
+  'the price is copied onto the order now, so a later rate change cannot restate this bill.':
+    'قیمت ابھی آرڈر پر محفوظ ہو جاتی ہے، اس لیے بعد میں ریٹ بدلنے سے یہ بل تبدیل نہیں ہو سکتا۔',
+  'Take this charge off the bill': 'یہ چارج بل سے ہٹا دیں',
+  'Charge added to the bill': 'چارج بل میں شامل ہو گیا',
+  '{name} ×{qty} added — the client’s bill is now {total}.':
+    '{name} ×{qty} شامل — گاہک کا بل اب {total} ہے۔',
+  'Charge removed': 'چارج ہٹا دیا گیا',
+  '{name} taken off the bill.': '{name} بل سے ہٹا دیا گیا۔',
+  'Charge refused': 'چارج مسترد',
+  'Removal refused': 'ہٹانا مسترد',
+  'This bill is closed — charges can no longer be added or removed. A correction is a new document, never an edit.':
+    'یہ بل بند ہو چکا ہے — اب چارج نہ شامل ہو سکتے ہیں نہ ہٹ سکتے ہیں۔ درستگی ہمیشہ نئی دستاویز ہوتی ہے، ترمیم کبھی نہیں۔',
+  'Only the platform clerk adds cylinder management work.':
+    'سلنڈر مینجمنٹ کا کام صرف پلیٹ فارم کلرک شامل کرتا ہے۔',
+
+  // ── Order form / bill wording shared by both features ───────────────────
+  'What they are ordering': 'وہ کیا آرڈر کر رہے ہیں',
+  'Unit price': 'فی یونٹ قیمت',
+  'How many': 'کتنے',
+  'Line total': 'سطر کا کل',
+  'Notes for the warehouse': 'گودام کے لیے نوٹس',
+  'Add another product': 'ایک اور پروڈکٹ شامل کریں',
+  'Place order': 'آرڈر درج کریں',
+  'Order placed': 'آرڈر درج ہو گیا',
+  'Deposit held on cylinders': 'سلنڈروں پر رکھی گئی ضمانت',
+  Totals: 'کل میزان',
+  Value: 'مالیت',
+  each: 'فی عدد',
+  includes: 'اس میں شامل',
+  'service work': 'سروس کا کام',
 };

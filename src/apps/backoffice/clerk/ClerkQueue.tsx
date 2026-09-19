@@ -4,9 +4,14 @@
 // mutation goes through api.*; every rejection is shown verbatim, because the
 // rejections are the point.
 //
+// Self-collections stand apart: the client's own van is coming, so there is no
+// vehicle, no route and no driver. They get their own lane at the top of the
+// board with their own two verbs — release, then record the handover.
+//
 // Keyboard (the clerk does this 200 times a day):
 //   /  search      ↑ ↓ / j k  move       Enter open       Esc close
 //   F  fill        A  assign             D  dispatch      C  cancel
+//   R  release for collection            H  record the handover
 
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import type { Order, OrderStatus } from '../../../core/types';
@@ -18,11 +23,12 @@ import {
   RuleError,
   orderCylinders,
   orderValue,
+  serviceChargeTotal,
 } from '../../../core/store';
 import { canTransition, STATUS_LABEL } from '../../../core/stateMachine';
 import { financialYear } from '../../../core/ecr';
 import { Button, Money, NumberStepper } from '../../../ui/primitives';
-import { Search, Truck, Warehouse, Clipboard, X, Alert, Box } from '../../../ui/icons';
+import { Search, Truck, Warehouse, Clipboard, X, Alert, Box, CheckCircle } from '../../../ui/icons';
 import { useT } from '../../../i18n';
 import OrderTable from '../shared/OrderTable';
 import {
@@ -37,6 +43,7 @@ import {
 } from '../shared/OrderTable';
 import OrderDetail from './OrderDetail';
 import DispatchModal from './DispatchModal';
+import CollectionModal from './CollectionModal';
 
 // Tolerates either `onChange(n)` or `onChange(event)` from the shared stepper.
 const asNumber = (v: any): number => {
@@ -48,11 +55,13 @@ const asNumber = (v: any): number => {
 
 // ─── Lanes ───────────────────────────────────────────────────────────────────
 
+type Verb = 'fill' | 'assign' | 'dispatch' | 'release' | 'collect';
+
 interface Lane {
   status: OrderStatus;
   title: string;
   hint: string;
-  verb?: 'fill' | 'assign' | 'dispatch';
+  verb?: Verb;
   verbLabel?: string;
 }
 
@@ -62,6 +71,51 @@ const LANES: Lane[] = [
   { status: 'ASSIGNED', title: 'Assigned', hint: 'Loaded — no ECR yet', verb: 'dispatch', verbLabel: 'Dispatch' },
   { status: 'DISPATCHED', title: 'Dispatched', hint: 'ECR allocated · on the road', verbLabel: undefined },
 ];
+
+/**
+ * A self-collection never touches a vehicle, so it never enters the Assigned
+ * lane. Its three steps are fill → release (this is where the ECR is burned)
+ * → record the handover when the client's van turns up.
+ */
+function collectionLane(order: Order): Lane {
+  switch (order.status) {
+    case 'PLACED':
+      return {
+        status: 'PLACED',
+        title: 'Placed',
+        hint: 'Not filled yet',
+        verb: 'fill',
+        verbLabel: 'Review & fill',
+      };
+    case 'FILLED':
+      return {
+        status: 'FILLED',
+        title: 'Filled',
+        hint: 'Staged — waiting to be released',
+        verb: 'release',
+        verbLabel: 'Release for collection',
+      };
+    case 'DISPATCHED':
+      return {
+        status: 'DISPATCHED',
+        title: 'Released',
+        hint: 'ECR allocated · waiting for the client’s van',
+        verb: 'collect',
+        verbLabel: 'Record collection',
+      };
+    default:
+      return { status: order.status, title: 'Collection', hint: '', verbLabel: undefined };
+  }
+}
+
+/** Says, in one glance, that nobody from MCL is driving this one anywhere. */
+function CollectionTag() {
+  return (
+    <span className={`inline-flex whitespace-nowrap border px-2 py-0.5 text-base ${TONE_CLASS.info}`}>
+      Client collects
+    </span>
+  );
+}
 
 // ─── Buttons (local, so the screen never waits on the design agent) ──────────
 
@@ -739,16 +793,21 @@ function LaneCard({
   order,
   lane,
   selected,
+  collection = false,
   onSelect,
   onVerb,
   onCancel,
+  onCharges,
 }: {
   order: Order;
   lane: Lane;
   selected: boolean;
+  /** Renders the collection markings and the stage caption. */
+  collection?: boolean;
   onSelect: () => void;
   onVerb: () => void;
   onCancel: () => void;
+  onCharges?: () => void;
 }) {
   const s = useStore((st) => st);
   const client = select.client(s, order.clientId);
@@ -756,6 +815,7 @@ function LaneCard({
   const driver = select.user(s, order.driverId);
   const route = select.route(s, order.routeId);
   const short = order.lines.some((l) => (l.qtyLoaded ?? l.qtyOrdered) < l.qtyOrdered);
+  const service = serviceChargeTotal(order);
 
   return (
     <article
@@ -772,9 +832,10 @@ function LaneCard({
         selected ? 'border-line bg-surface-high' : 'border-line hover:bg-surface-high'
       }`}
     >
-      <div className="flex items-center gap-2">
+      <div className="flex flex-wrap items-center gap-2">
         <span className="font-mono text-base tabular-nums text-fg-muted">#{order.id}</span>
         <OriginTag origin={order.origin} />
+        {collection && <CollectionTag />}
         <span
           className="ms-auto font-mono text-base tabular-nums text-fg-muted"
           title="Time since the order was placed"
@@ -812,15 +873,22 @@ function LaneCard({
         })}
       </ul>
 
-      {(vehicle || route) && (
+      {collection ? (
         <div className="mt-3 flex flex-wrap items-center gap-x-3 gap-y-1 border-t border-line pt-3 text-base text-fg-muted">
-          <span className="font-mono text-fg-muted">{vehicle?.registration}</span>
-          <span>{route?.code}</span>
-          <span>{driver?.name}</span>
+          <span className="text-fg">{lane.title}</span>
+          <span>{lane.hint}</span>
         </div>
+      ) : (
+        (vehicle || route) && (
+          <div className="mt-3 flex flex-wrap items-center gap-x-3 gap-y-1 border-t border-line pt-3 text-base text-fg-muted">
+            <span className="font-mono text-fg-muted">{vehicle?.registration}</span>
+            <span>{route?.code}</span>
+            <span>{driver?.name}</span>
+          </div>
+        )
       )}
 
-      <div className="mt-3 flex items-center gap-3 border-t border-line pt-3">
+      <div className="mt-3 flex flex-wrap items-center gap-3 border-t border-line pt-3">
         <span className="font-mono text-base tabular-nums text-fg">{cylindersOf(order)} cylinders</span>
         <span className="font-mono text-base tabular-nums text-fg">
           <Money value={orderValue(order)} />
@@ -833,12 +901,18 @@ function LaneCard({
         ) : (
           <span className="ms-auto text-base text-fg-muted">No ECR number yet</span>
         )}
+        {service > 0 && (
+          <span className="w-full text-base text-fg-muted">
+            goods <Money value={orderValue(order) - service} /> + service work{' '}
+            <Money value={service} />
+          </span>
+        )}
       </div>
 
-      {lane.verb && (
-        <div className="mt-3 flex gap-2">
+      <div className="mt-3 flex gap-2">
+        {lane.verb && (
           <Btn
-            kind={lane.verb === 'dispatch' ? 'primary' : 'secondary'}
+            kind={lane.verb === 'assign' || lane.verb === 'fill' ? 'secondary' : 'primary'}
             full
             onClick={() => {
               onSelect();
@@ -847,11 +921,25 @@ function LaneCard({
           >
             {lane.verbLabel}
           </Btn>
+        )}
+        {onCharges && (
+          <Btn
+            kind="ghost"
+            onClick={() => {
+              onSelect();
+              onCharges();
+            }}
+            title="Add nozzle changes, repaints, repairs — they go on this client's bill"
+          >
+            <Box className="h-4 w-4" /> {service > 0 ? `Charges (${order.serviceCharges.length})` : 'Charges'}
+          </Btn>
+        )}
+        {lane.verb && (
           <Btn kind="ghost" onClick={onCancel} title="Cancel this order">
             <X className="h-4 w-4" />
           </Btn>
-        </div>
-      )}
+        )}
+      </div>
     </article>
   );
 }
@@ -867,15 +955,18 @@ export function ClerkQueue() {
   const [locationId, setLocationId] = useState<number>(me.locationId ?? 1);
   const [view, setView] = useState<'lanes' | 'table'>('lanes');
   const [query, setQuery] = useState('');
+  const [work, setWork] = useState<'all' | 'delivery' | 'collection'>('all');
   const [selectedId, setSelectedId] = useState<number | null>(null);
   const [detailOpen, setDetailOpen] = useState(false);
   const [fillFor, setFillFor] = useState<number | null>(null);
   const [assignFor, setAssignFor] = useState<number | null>(null);
   const [cancelFor, setCancelFor] = useState<number | null>(null);
   const [dispatchFor, setDispatchFor] = useState<number | null>(null);
+  const [collectFor, setCollectFor] = useState<number | null>(null);
   const searchRef = useRef<HTMLInputElement | null>(null);
 
-  const modalOpen = fillFor != null || assignFor != null || cancelFor != null || dispatchFor != null;
+  const modalOpen =
+    fillFor != null || assignFor != null || cancelFor != null || dispatchFor != null || collectFor != null;
 
   // ── Data ────────────────────────────────────────────────────────────────
   const matches = useCallback(
@@ -899,8 +990,11 @@ export function ClerkQueue() {
     [query, s],
   );
 
+  // The four pipeline lanes carry deliveries only — a collection has no vehicle
+  // to be assigned to, so it would sit in the Filled lane for ever under a verb
+  // that does not apply to it.
   const byLane = useMemo(() => {
-    const at = s.orders.filter((o) => o.locationId === locationId);
+    const at = s.orders.filter((o) => o.locationId === locationId && o.fulfilment !== 'collection');
     const map: Record<string, Order[]> = {};
     for (const lane of LANES) {
       map[lane.status] = at
@@ -910,7 +1004,29 @@ export function ClerkQueue() {
     return map;
   }, [s.orders, locationId, matches]);
 
-  const flat = useMemo(() => LANES.flatMap((l) => byLane[l.status] ?? []), [byLane]);
+  /** Orders whose client is coming to fetch them — straight from the store. */
+  const collections = useMemo(() => {
+    const rank: Record<string, number> = { DISPATCHED: 0, FILLED: 1, PLACED: 2 };
+    return select
+      .collectionQueue(s, locationId)
+      .filter(matches)
+      .sort(
+        (a, b) =>
+          (rank[a.status] ?? 9) - (rank[b.status] ?? 9) || a.createdAt.localeCompare(b.createdAt),
+      );
+  }, [s, locationId, matches]);
+
+  const awaitingVan = collections.filter((o) => o.status === 'DISPATCHED');
+  const showLanes = work !== 'collection';
+  const showCollections = work !== 'delivery';
+
+  const flat = useMemo(
+    () => [
+      ...(showCollections ? collections : []),
+      ...(showLanes ? LANES.flatMap((l) => byLane[l.status] ?? []) : []),
+    ],
+    [byLane, collections, showLanes, showCollections],
+  );
   const selected = selectedId == null ? undefined : select.order(s, selectedId);
 
   const queueTotals = useMemo(() => {
@@ -930,7 +1046,7 @@ export function ClerkQueue() {
 
   // ── Verbs ───────────────────────────────────────────────────────────────
   const openVerb = useCallback(
-    (order: Order | undefined, verb: Lane['verb'] | 'cancel') => {
+    (order: Order | undefined, verb: Verb | 'cancel' | undefined) => {
       if (!order) return;
       if (verb === 'fill') {
         if (order.status !== 'PLACED') {
@@ -939,6 +1055,16 @@ export function ClerkQueue() {
         }
         setFillFor(order.id);
       } else if (verb === 'assign') {
+        // A collection has nothing to assign. Say so here rather than letting a
+        // clerk put a client's own pickup on an MCL truck.
+        if (order.fulfilment === 'collection') {
+          toast(
+            `Order #${order.id} is a self-collection — the client's own van is coming for it. There is no vehicle, route or driver to assign; release it for collection instead.`,
+            'warn',
+            'No vehicle needed',
+          );
+          return;
+        }
         // ASSIGNED → ASSIGNED is not a legal transition, so re-assignment is not
         // offered. Say why rather than letting the state machine throw.
         if (order.status === 'ASSIGNED') {
@@ -960,6 +1086,49 @@ export function ClerkQueue() {
           return;
         }
         setDispatchFor(order.id);
+      } else if (verb === 'release') {
+        // Releasing a delivery is refused by the store, and the refusal is
+        // worth reading — so call it and show what comes back.
+        if (order.fulfilment !== 'collection') {
+          try {
+            api.releaseForCollection(order.id);
+          } catch (err) {
+            const msg = err instanceof RuleError ? err.message : (err as Error).message;
+            const rule = err instanceof RuleError ? err.rule : 'ERROR';
+            toast(msg, 'danger', `Release refused — ${rule}`);
+          }
+          return;
+        }
+        if (order.ecr) {
+          toast(
+            `Order #${order.id} already carries ECR ${order.ecr} — it is released and waiting for the client's van. Record the collection when they arrive.`,
+            'warn',
+            'Already released',
+          );
+          return;
+        }
+        if (order.status === 'PLACED') {
+          toast(`Fill order #${order.id} before releasing it — the counter has to know what goes out.`, 'warn');
+          return;
+        }
+        setDispatchFor(order.id);
+      } else if (verb === 'collect') {
+        if (order.fulfilment !== 'collection') {
+          toast(
+            `Order #${order.id} is going out on a vehicle — the driver records that delivery on the tab, not the counter.`,
+            'warn',
+            'Not a collection',
+          );
+          return;
+        }
+        if (order.status !== 'DISPATCHED') {
+          toast(
+            `Order #${order.id} has not been released yet. Release it for collection first — that is where the ECR is allocated.`,
+            'warn',
+          );
+          return;
+        }
+        setCollectFor(order.id);
       } else if (verb === 'cancel') {
         setCancelFor(order.id);
       }
@@ -1009,6 +1178,8 @@ export function ClerkQueue() {
       if (k === 'f') openVerb(selected, 'fill');
       else if (k === 'a') openVerb(selected, 'assign');
       else if (k === 'd') openVerb(selected, 'dispatch');
+      else if (k === 'r') openVerb(selected, 'release');
+      else if (k === 'h') openVerb(selected, 'collect');
       else if (k === 'c') openVerb(selected, 'cancel');
     };
     window.addEventListener('keydown', onKey);
@@ -1060,6 +1231,33 @@ export function ClerkQueue() {
             </select>
 
             <div className="flex divide-x divide-line border border-line">
+              {(
+                [
+                  ['all', t('All work')],
+                  ['delivery', t('Deliveries')],
+                  ['collection', t('Collections')],
+                ] as const
+              ).map(([v, label]) => (
+                <button
+                  key={v}
+                  type="button"
+                  onClick={() => setWork(v)}
+                  aria-pressed={work === v}
+                  className={`px-4 py-2 text-base ${
+                    work === v
+                      ? 'bg-surface-high font-semibold text-fg'
+                      : 'bg-surface text-fg hover:bg-surface-high'
+                  }`}
+                >
+                  {label}
+                  {v === 'collection' && collections.length > 0 && (
+                    <span className="ms-2 font-mono tabular-nums">{collections.length}</span>
+                  )}
+                </button>
+              ))}
+            </div>
+
+            <div className="flex divide-x divide-line border border-line">
               {(['lanes', 'table'] as const).map((v) => (
                 <button
                   key={v}
@@ -1093,6 +1291,12 @@ export function ClerkQueue() {
             sub={`${queueTotals.dispatchedCyl} cylinders on the road`}
           />
           <Tile
+            label={t('Waiting for the client’s van')}
+            value={awaitingVan.length}
+            tone={awaitingVan.length ? 'warn' : 'neutral'}
+            sub={`${collections.length} self-collection(s) in the queue`}
+          />
+          <Tile
             label="Acting as"
             value={<span className="text-lg">{me.name}</span>}
             sub={`${me.role} · every action is audited`}
@@ -1104,7 +1308,56 @@ export function ClerkQueue() {
       <div className="min-h-0 flex-1 overflow-y-auto px-4 py-3">
         <EcrCounters locationId={locationId} highlightKey={highlightKey} />
 
-        {view === 'lanes' ? (
+        {showCollections && view === 'lanes' && (
+          <section className="mt-3 border border-line bg-surface">
+            <header className="flex flex-wrap items-baseline gap-x-3 gap-y-1 border-b border-line px-4 py-3">
+              <Box className="h-5 w-5 self-center text-fg-muted" />
+              <h2 className="text-lg font-semibold text-fg">{t('Self-collection counter')}</h2>
+              <span className="font-mono text-lg tabular-nums text-fg">{collections.length}</span>
+              <p className="text-base text-fg-muted">
+                {t(
+                  'The client’s own van comes for these — no vehicle, no route, no driver, and the ex-delivery rate.',
+                )}
+              </p>
+              {awaitingVan.length > 0 && (
+                <span className={`ms-auto border px-2 py-0.5 text-base ${TONE_CLASS.warn}`}>
+                  {t('{n} released and waiting for someone to turn up', { n: awaitingVan.length })}
+                </span>
+              )}
+            </header>
+            <div className="grid gap-3 p-3 lg:grid-cols-2 xl:grid-cols-4">
+              {collections.length === 0 ? (
+                <p className="border border-line px-3 py-6 text-center text-base text-fg-muted lg:col-span-2 xl:col-span-4">
+                  {query
+                    ? t('No self-collections match the search.')
+                    : t('No self-collections at this location today.')}
+                </p>
+              ) : (
+                collections.map((o) => {
+                  const lane = collectionLane(o);
+                  return (
+                    <LaneCard
+                      key={o.id}
+                      order={o}
+                      lane={lane}
+                      collection
+                      selected={selectedId === o.id}
+                      onSelect={() => setSelectedId(o.id)}
+                      onVerb={() => openVerb(o, lane.verb)}
+                      onCancel={() => openVerb(o, 'cancel')}
+                      onCharges={() => {
+                        setSelectedId(o.id);
+                        setDetailOpen(true);
+                      }}
+                    />
+                  );
+                })
+              )}
+            </div>
+          </section>
+        )}
+
+        {showLanes && view === 'lanes' ? (
           <div className="mt-3 grid gap-3 lg:grid-cols-2 xl:grid-cols-4">
             {LANES.map((lane) => {
               const list = byLane[lane.status] ?? [];
@@ -1132,6 +1385,10 @@ export function ClerkQueue() {
                           onSelect={() => setSelectedId(o.id)}
                           onVerb={() => openVerb(o, lane.verb)}
                           onCancel={() => openVerb(o, 'cancel')}
+                          onCharges={() => {
+                            setSelectedId(o.id);
+                            setDetailOpen(true);
+                          }}
                         />
                       ))
                     )}
@@ -1140,7 +1397,7 @@ export function ClerkQueue() {
               );
             })}
           </div>
-        ) : (
+        ) : view === 'table' ? (
           <div className="mt-3">
             <OrderTable
               orders={flat}
@@ -1150,30 +1407,65 @@ export function ClerkQueue() {
                 setSelectedId(o.id);
                 setDetailOpen(true);
               }}
-              columns={['status', 'ecr', 'client', 'origin', 'lines', 'cylinders', 'value', 'vehicle', 'driver', 'age']}
+              columns={[
+                'status',
+                'fulfilment',
+                'ecr',
+                'client',
+                'origin',
+                'lines',
+                'cylinders',
+                'value',
+                'vehicle',
+                'driver',
+                'age',
+              ]}
               empty="No orders at this location match the search."
-              rowActions={(o) => (
-                <div className="flex justify-end gap-2">
-                  {o.status === 'PLACED' && (
-                    <Btn kind="secondary" onClick={() => openVerb(o, 'fill')}>
-                      Fill
+              rowActions={(o) => {
+                const collection = o.fulfilment === 'collection';
+                return (
+                  <div className="flex justify-end gap-2">
+                    {o.status === 'PLACED' && (
+                      <Btn kind="secondary" onClick={() => openVerb(o, 'fill')}>
+                        Fill
+                      </Btn>
+                    )}
+                    {o.status === 'FILLED' &&
+                      (collection ? (
+                        <Btn kind="primary" onClick={() => openVerb(o, 'release')}>
+                          <Box className="h-4 w-4" /> Release for collection
+                        </Btn>
+                      ) : (
+                        <Btn kind="secondary" onClick={() => openVerb(o, 'assign')}>
+                          Assign
+                        </Btn>
+                      ))}
+                    {o.status === 'ASSIGNED' && !collection && (
+                      <Btn kind="primary" onClick={() => openVerb(o, 'dispatch')}>
+                        Dispatch
+                      </Btn>
+                    )}
+                    {o.status === 'DISPATCHED' && collection && (
+                      <Btn kind="primary" onClick={() => openVerb(o, 'collect')}>
+                        <CheckCircle className="h-4 w-4" /> Record collection
+                      </Btn>
+                    )}
+                    <Btn
+                      kind="ghost"
+                      title="Cylinder management charges"
+                      onClick={() => {
+                        setSelectedId(o.id);
+                        setDetailOpen(true);
+                      }}
+                    >
+                      <Box className="h-4 w-4" /> Charges
                     </Btn>
-                  )}
-                  {o.status === 'FILLED' && (
-                    <Btn kind="secondary" onClick={() => openVerb(o, 'assign')}>
-                      Assign
-                    </Btn>
-                  )}
-                  {o.status === 'ASSIGNED' && (
-                    <Btn kind="primary" onClick={() => openVerb(o, 'dispatch')}>
-                      Dispatch
-                    </Btn>
-                  )}
-                </div>
-              )}
+                  </div>
+                );
+              }}
             />
           </div>
-        )}
+        ) : null}
       </div>
 
       {/* ── Status bar ───────────────────────────────────────────────────── */}
@@ -1184,6 +1476,7 @@ export function ClerkQueue() {
             <>
               Selected <span className="font-mono text-fg-muted">#{selected.id}</span>{' '}
               {select.clientName(s, selected.clientId)} · {STATUS_LABEL[selected.status]}
+              {selected.fulfilment === 'collection' && <> · client collects</>}
             </>
           ) : (
             <>Nothing selected — click a card or press ↓</>
@@ -1193,6 +1486,8 @@ export function ClerkQueue() {
           <Shortcut k="/">search</Shortcut>
           <Shortcut k="↑ ↓">move</Shortcut>
           <Shortcut k="↵">open</Shortcut>
+          <Shortcut k="R">release for collection</Shortcut>
+          <Shortcut k="H">record the handover</Shortcut>
         </span>
       </footer>
 
@@ -1204,23 +1499,35 @@ export function ClerkQueue() {
           actions={
             <div className="flex items-center gap-2">
               <span className="me-auto text-base text-fg-muted">
-                {selected.status === 'ASSIGNED'
-                  ? 'Next step allocates the ECR permanently.'
-                  : 'Each step is checked against the state machine and your role.'}
+                {selected.fulfilment === 'collection' && selected.status === 'FILLED'
+                  ? 'Releasing allocates the ECR permanently — no vehicle is involved.'
+                  : selected.status === 'ASSIGNED'
+                    ? 'Next step allocates the ECR permanently.'
+                    : 'Each step is checked against the state machine and your role.'}
               </span>
               {selected.status === 'PLACED' && (
                 <Btn kind="primary" onClick={() => openVerb(selected, 'fill')}>
                   Review &amp; fill
                 </Btn>
               )}
-              {selected.status === 'FILLED' && (
-                <Btn kind="primary" onClick={() => openVerb(selected, 'assign')}>
-                  Assign vehicle
-                </Btn>
-              )}
-              {selected.status === 'ASSIGNED' && (
+              {selected.status === 'FILLED' &&
+                (selected.fulfilment === 'collection' ? (
+                  <Btn kind="primary" onClick={() => openVerb(selected, 'release')}>
+                    <Box className="h-3.5 w-3.5" /> Release for collection &amp; allocate ECR
+                  </Btn>
+                ) : (
+                  <Btn kind="primary" onClick={() => openVerb(selected, 'assign')}>
+                    Assign vehicle
+                  </Btn>
+                ))}
+              {selected.status === 'ASSIGNED' && selected.fulfilment !== 'collection' && (
                 <Btn kind="primary" onClick={() => openVerb(selected, 'dispatch')}>
                   <Truck className="h-3.5 w-3.5" /> Confirm dispatch &amp; allocate ECR
+                </Btn>
+              )}
+              {selected.status === 'DISPATCHED' && selected.fulfilment === 'collection' && (
+                <Btn kind="primary" onClick={() => openVerb(selected, 'collect')}>
+                  <CheckCircle className="h-3.5 w-3.5" /> Record collection
                 </Btn>
               )}
               {canTransition(selected.status, 'CANCELLED') && (
@@ -1244,6 +1551,11 @@ export function ClerkQueue() {
         orderId={dispatchFor}
         onClose={() => setDispatchFor(null)}
         onDispatched={(_ecr, id) => setSelectedId(id)}
+      />
+      <CollectionModal
+        orderId={collectFor}
+        onClose={() => setCollectFor(null)}
+        onCollected={(id) => setSelectedId(id)}
       />
     </div>
   );

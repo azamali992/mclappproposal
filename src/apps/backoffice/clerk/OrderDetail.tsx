@@ -1,17 +1,31 @@
 // ─── OrderDetail — one order, everything about it ────────────────────────────
 // Shared by the clerk queue (as a right-hand drawer) and the sales desk (as an
-// inline panel). Read-only: it renders state and hosts an `actions` slot, but
-// it never calls api.* itself. The caller owns the verbs.
+// inline panel). It renders state and hosts an `actions` slot; the caller owns
+// the verbs that move the order along the pipeline.
+//
+// One exception, deliberate: the cylinder management charges are edited here,
+// because the bill is the only place they make sense. That editing lives in
+// ServiceChargePanel and goes through api.addServiceCharge /
+// api.removeServiceCharge like everything else — no rule is applied locally.
 
 import { useEffect, useMemo } from 'react';
 import type { ReactNode } from 'react';
 import type { Order } from '../../../core/types';
-import { useStore, select, orderValue, orderCylinders, expectedCash } from '../../../core/store';
+import {
+  useStore,
+  select,
+  orderValue,
+  orderCylinders,
+  expectedCash,
+  serviceChargeTotal,
+} from '../../../core/store';
 import { Money, PipelineTracker } from '../../../ui/primitives';
-import { X } from '../../../ui/icons';
+import { X, Box } from '../../../ui/icons';
 import OrderTimeline from '../shared/OrderTimeline';
+import ServiceChargePanel from './ServiceChargePanel';
 import {
   EcrText,
+  FulfilmentTag,
   OrderStatusPill,
   OriginTag,
   TONE_CLASS,
@@ -89,6 +103,8 @@ export function OrderDetail({
       delivered: orderCylinders(order, 'qtyDelivered'),
       returned: orderCylinders(order, 'qtyReturned'),
       value: orderValue(order),
+      service: serviceChargeTotal(order),
+      goods: orderValue(order) - serviceChargeTotal(order),
       cash: expectedCash(order),
     };
   }, [order]);
@@ -115,6 +131,7 @@ export function OrderDetail({
   const vclass = select.vehicleClass(s, order.vehicleId);
   const driver = select.user(s, order.driverId);
   const creator = select.user(s, order.createdBy);
+  const collecting = order.fulfilment === 'collection';
   const delivery = s.deliveryEvents.find((d) => d.orderId === order.id);
   const confirmation = s.confirmationEvents.find((c) => c.orderId === order.id);
 
@@ -128,6 +145,7 @@ export function OrderDetail({
               <span className="text-base text-fg-muted">Order</span>
               <span className="font-mono text-base tabular-nums text-fg">#{order.id}</span>
               <OriginTag origin={order.origin} />
+              <FulfilmentTag fulfilment={order.fulfilment} />
               <OrderStatusPill status={order.status} />
             </div>
             <div className="mt-2 flex items-baseline gap-2">
@@ -208,20 +226,37 @@ export function OrderDetail({
               {book?.name} <span className="font-mono text-base text-fg-muted">{book?.code}</span>
             </KV>
             <KV label="Requested">{fmtDate(order.requestedDate)}</KV>
-            <KV label="Route">{route ? `${route.code} — ${route.name}` : 'Not assigned'}</KV>
-            <KV label="Vehicle">
-              {vehicle ? (
-                <span className="font-mono">
-                  {vehicle.registration}
-                  <span className="ms-2 font-sans text-base text-fg-muted">
-                    {vclass?.name}, holds {vclass?.maxCylinders} cylinders
-                  </span>
-                </span>
-              ) : (
-                'Not assigned'
-              )}
+            <KV label="How it goes out">
+              {collecting ? 'Client collects from the plant' : 'Delivered on an MCL vehicle'}
             </KV>
-            <KV label="Driver">{driver?.name ?? 'Not assigned'}</KV>
+            {collecting ? (
+              <>
+                <KV label="Vehicle, route and driver">None — the client’s own van</KV>
+                <KV label="Collected by" tone={order.collectedBy ? undefined : 'warn'}>
+                  {order.collectedBy ?? 'Not collected yet'}
+                </KV>
+                <KV label="Collected at">
+                  {order.collectedAt ? fmtDateTime(order.collectedAt) : '—'}
+                </KV>
+              </>
+            ) : (
+              <>
+                <KV label="Route">{route ? `${route.code} — ${route.name}` : 'Not assigned'}</KV>
+                <KV label="Vehicle">
+                  {vehicle ? (
+                    <span className="font-mono">
+                      {vehicle.registration}
+                      <span className="ms-2 font-sans text-base text-fg-muted">
+                        {vclass?.name}, holds {vclass?.maxCylinders} cylinders
+                      </span>
+                    </span>
+                  ) : (
+                    'Not assigned'
+                  )}
+                </KV>
+                <KV label="Driver">{driver?.name ?? 'Not assigned'}</KV>
+              </>
+            )}
             <KV label="Taken by">
               {creator?.name} <span className="text-base text-fg-muted">({roleLabel(creator?.role)})</span>
             </KV>
@@ -237,7 +272,13 @@ export function OrderDetail({
 
         <Section
           title="What was ordered"
-          right={<span className="text-base text-fg-muted">Ordered, then loaded, then delivered</span>}
+          right={
+            <span className="text-base text-fg-muted">
+              {collecting
+                ? 'Collection rate — transport not included'
+                : 'Delivered rate — transport included'}
+            </span>
+          }
         >
           <div className="border border-line">
             <table className="w-full border-collapse text-base">
@@ -308,26 +349,61 @@ export function OrderDetail({
                     {totals.returned || '—'}
                   </td>
                   <td className="px-3 py-3 text-right font-mono tabular-nums text-fg">
-                    <Money value={totals.value} />
+                    <Money value={totals.goods} />
                   </td>
                 </tr>
               </tfoot>
             </table>
+          </div>
+
+          {/* ── The bill: goods + service work = total ────────────────── */}
+          <div className="mt-3 border border-line">
+            <dl className="divide-y divide-line">
+              <div className="flex items-baseline justify-between gap-3 px-3 py-2.5">
+                <dt className="text-base text-fg-muted">Goods</dt>
+                <dd className="font-mono text-base tabular-nums text-fg">
+                  <Money value={totals.goods} />
+                </dd>
+              </div>
+              <div className="flex items-baseline justify-between gap-3 px-3 py-2.5">
+                <dt className="flex items-center gap-2 text-base text-fg-muted">
+                  <Box className="h-4 w-4" /> Cylinder management work
+                  {order.serviceCharges.length > 0 && (
+                    <span className="font-mono tabular-nums">({order.serviceCharges.length})</span>
+                  )}
+                </dt>
+                <dd className="font-mono text-base tabular-nums text-fg">
+                  <Money value={totals.service} />
+                </dd>
+              </div>
+              <div className="flex items-baseline justify-between gap-3 bg-surface px-3 py-3">
+                <dt className="text-base font-semibold text-fg">The client’s bill</dt>
+                <dd className="font-mono text-xl font-semibold tabular-nums text-fg">
+                  <Money value={totals.value} />
+                </dd>
+              </div>
+            </dl>
           </div>
           <p className="mt-3 text-base text-fg-muted">
             {client?.paymentTerms === 'credit' ? (
               <>Credit client — no cash is expected at the door; the value posts against their account.</>
             ) : (
               <>
-                Cash on delivery — the driver must return{' '}
+                {collecting ? 'Cash on collection — the counter takes ' : 'Cash on delivery — the driver must return '}
                 <span className="font-mono tabular-nums text-fg-muted">
                   <Money value={totals.cash || totals.value} />
                 </span>{' '}
-                to the gate cashier.
+                {collecting
+                  ? 'when the client’s van arrives, and it goes to the gate cashier with the rest of the day’s cash.'
+                  : 'to the gate cashier.'}
               </>
             )}
           </p>
         </Section>
+
+        <section className="border-t border-line px-5 py-5">
+          <ServiceChargePanel orderId={order.id} />
+        </section>
 
         {(delivery || confirmation) && (
           <Section title="Delivery and confirmation">

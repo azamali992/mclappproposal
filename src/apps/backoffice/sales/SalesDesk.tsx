@@ -6,13 +6,26 @@
 
 import { useMemo, useState } from 'react';
 import type { Order, OrderStatus } from '../../../core/types';
-import { useStore, useCurrentUser, select, orderValue, orderCylinders } from '../../../core/store';
+import {
+  useStore,
+  useCurrentUser,
+  select,
+  orderValue,
+  orderCylinders,
+  serviceChargeTotal,
+} from '../../../core/store';
 import { STATUS_LABEL, PIPELINE } from '../../../core/stateMachine';
 import { Money } from '../../../ui/primitives';
 import { Clipboard, Plus, Warehouse, CheckCircle } from '../../../ui/icons';
 import { useT } from '../../../i18n';
 import OrderTable from '../shared/OrderTable';
-import { OrderStatusPill, TONE_CLASS, cylindersOf, fmtDateTime } from '../shared/OrderTable';
+import {
+  FulfilmentTag,
+  OrderStatusPill,
+  TONE_CLASS,
+  cylindersOf,
+  fmtDateTime,
+} from '../shared/OrderTable';
 import OrderDetail from '../clerk/OrderDetail';
 import NewOrderForm from './NewOrderForm';
 
@@ -61,6 +74,8 @@ export function SalesDesk() {
       open: open.length,
       cylinders: mine.reduce((t, o) => t + cylindersOf(o), 0),
       value: mine.reduce((t, o) => t + orderValue(o), 0),
+      service: mine.reduce((t, o) => t + serviceChargeTotal(o), 0),
+      collections: mine.filter((o) => o.fulfilment === 'collection').length,
       awaitingClerk: mine.filter((o) => ['PLACED', 'FILLED', 'ASSIGNED'].includes(o.status)).length,
     };
   }, [mine]);
@@ -153,7 +168,20 @@ export function SalesDesk() {
         <div className="mt-3 flex flex-wrap gap-2">
           <Tile label={t('Orders taken')} value={totals.count} sub={`${totals.open} still open`} />
           <Tile label={t('Cylinders sold')} value={totals.cylinders} sub="across every status" />
-          <Tile label={t('Order value')} value={<Money value={totals.value} />} sub="at loaded quantities" />
+          <Tile
+            label={t('Order value')}
+            value={<Money value={totals.value} />}
+            sub={
+              totals.service > 0
+                ? `includes Rs ${totals.service.toLocaleString('en-PK')} of service work`
+                : 'at loaded quantities'
+            }
+          />
+          <Tile
+            label={t('Client collects')}
+            value={totals.collections}
+            sub="priced off the ex-delivery card"
+          />
           <Tile label={t('Waiting on the warehouse')} value={totals.awaitingClerk} sub="placed · filled · assigned" />
           <Tile
             label={t('Dispatch queue depth')}
@@ -174,6 +202,7 @@ export function SalesDesk() {
                   <span className="font-semibold">
                     Order #{justPlaced.id} placed for {select.clientName(s, justPlaced.clientId)}
                   </span>
+                  <FulfilmentTag fulfilment={justPlaced.fulfilment} />
                   <OrderStatusPill status={select.order(s, justPlaced.id)?.status ?? justPlaced.status} />
                   <span className="font-mono text-base tabular-nums text-fg-muted">
                     {orderCylinders(select.order(s, justPlaced.id) ?? justPlaced, 'qtyOrdered')} cylinders ·{' '}
@@ -183,9 +212,19 @@ export function SalesDesk() {
                 </div>
                 <p className="mt-2 flex items-center gap-2 text-fg-muted">
                   <Warehouse className="h-4 w-4" />
-                  It is already in the warehouse Placed lane — the dispatch queue now holds{' '}
-                  <span className="font-mono tabular-nums">{clerkQueueDepth}</span> orders. Nothing was
-                  re-keyed, and no ECR has been issued yet.
+                  {justPlaced.fulfilment === 'collection' ? (
+                    <>
+                      It is on the warehouse&rsquo;s self-collection counter — priced off the ex-delivery
+                      card, with no vehicle, route or driver. The clerk releases it when the
+                      client&rsquo;s van arrives; no ECR has been issued yet.
+                    </>
+                  ) : (
+                    <>
+                      It is already in the warehouse Placed lane — the dispatch queue now holds{' '}
+                      <span className="font-mono tabular-nums">{clerkQueueDepth}</span> orders. Nothing was
+                      re-keyed, and no ECR has been issued yet.
+                    </>
+                  )}
                 </p>
               </div>
               <button
@@ -203,7 +242,16 @@ export function SalesDesk() {
             dense
             selectedId={detailId}
             onSelect={(o) => setDetailId(o.id)}
-            columns={['status', 'ecr', 'client', 'lines', 'cylinders', 'value', 'requested', 'created']}
+            columns={[
+              'status',
+              'fulfilment',
+              'ecr',
+              'client',
+              'lines',
+              'cylinders',
+              'value',
+              'requested',
+            ]}
             empty={
               scope === 'mine'
                 ? 'No orders of yours match these filters.'

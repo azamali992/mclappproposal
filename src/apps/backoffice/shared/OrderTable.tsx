@@ -10,7 +10,7 @@ import { useCallback, useRef } from 'react';
 import type { ReactNode, KeyboardEvent as ReactKeyboardEvent } from 'react';
 import type { Order, OrderStatus, Role } from '../../../core/types';
 import type { State } from '../../../core/store';
-import { useStore, select, orderValue, orderCylinders } from '../../../core/store';
+import { useStore, select, orderValue, orderCylinders, serviceChargeTotal } from '../../../core/store';
 import { formatEcr } from '../../../core/ecr';
 import { Money, StatusPill, useToast } from '../../../ui/primitives';
 
@@ -78,6 +78,24 @@ export function EcrText({ ecr, size = 'sm' }: { ecr?: string | null; size?: 'sm'
   return <span className={`font-mono tabular-nums text-fg ${cls}`}>{formatEcr(ecr)}</span>;
 }
 
+/**
+ * Delivery or self-collection. A collection has no vehicle, no route and no
+ * driver, and it is priced off the ex-delivery card — so it is marked wherever
+ * an order is listed, not just on the clerk's board.
+ */
+export function FulfilmentTag({ fulfilment }: { fulfilment: Order['fulfilment'] }) {
+  const collects = fulfilment === 'collection';
+  return (
+    <span
+      className={`inline-flex whitespace-nowrap border px-2 py-0.5 text-base ${
+        collects ? TONE_CLASS.info : TONE_CLASS.neutral
+      }`}
+    >
+      {collects ? 'Client collects' : 'Delivery'}
+    </span>
+  );
+}
+
 export function OriginTag({ origin }: { origin: Order['origin'] }) {
   const fromClient = origin === 'client_app';
   return (
@@ -120,6 +138,7 @@ export function cylindersOf(o: Order): number {
 
 export type OrderColumn =
   | 'status'
+  | 'fulfilment'
   | 'ecr'
   | 'client'
   | 'origin'
@@ -171,6 +190,11 @@ const COLUMN_DEFS: Record<OrderColumn, ColumnDef> = {
       );
     },
   },
+  fulfilment: {
+    label: 'How it goes out',
+    className: 'w-36',
+    render: (o) => <FulfilmentTag fulfilment={o.fulfilment} />,
+  },
   origin: { label: 'Taken from', className: 'w-28', render: (o) => <OriginTag origin={o.origin} /> },
   location: {
     label: 'Location',
@@ -213,12 +237,21 @@ const COLUMN_DEFS: Record<OrderColumn, ColumnDef> = {
   value: {
     label: 'Value',
     align: 'right',
-    className: 'w-28',
-    render: (o) => (
-      <span className="font-mono tabular-nums text-fg">
-        <Money value={orderValue(o)} />
-      </span>
-    ),
+    className: 'w-36',
+    render: (o) => {
+      const total = orderValue(o);
+      const service = serviceChargeTotal(o);
+      return (
+        <span className="font-mono tabular-nums text-fg">
+          <Money value={total} />
+          {service > 0 && (
+            <span className="block text-base text-fg-muted">
+              <Money value={total - service} bare /> + <Money value={service} bare /> service
+            </span>
+          )}
+        </span>
+      );
+    },
   },
   requested: {
     label: 'Requested for',
